@@ -1,4 +1,4 @@
-es = require('esprima');
+//var es = require('esprima');
 
 function TypeMap() {
 }
@@ -232,6 +232,7 @@ function inferTypes(asts) {
         scanVars(node.body); // add var decls to env
         if (expr && fun.id !== null) {
             addVarToEnv(fun.id.name); // add self-reference to environment
+            unify(fun, env.get(fun.id.name));
         }
         addVarToEnv("@this");
         addVarToEnv("@return");
@@ -245,7 +246,7 @@ function inferTypes(asts) {
         if (typeof void_ctx !== "boolean")
             throw "No void_ctx given";
         if (node === null)
-            return;
+            return null;
         if (typeof node !== "object" || !node.type)
             throw "visitExp not called with node";
         switch (node.type) {
@@ -256,6 +257,7 @@ function inferTypes(asts) {
                 unify(node, getVar("@this"));
                 return NotPrimitive;
             case "ArrayExpression":
+                var typ = getType(node);
                 for (var i=0; i<node.elements.length; i++) {
                     var elm = node.elements[i];
                     visitExp(elm, NotVoid);
@@ -297,13 +299,14 @@ function inferTypes(asts) {
                     visitExp(node.expressions[i], Void);
                 }
                 var p = visitExp(node.expressions[node.expressions.length-1], void_ctx);
+                unify(node, node.expressions[node.expressions.length-1]); // return value of last expression
                 return p;
             case "UnaryExpression":
-                visitExp(node.argument, NotVoid);
+                visitExp(node.argument, Void);
                 return Primitive;
             case "BinaryExpression":
-                visitExp(node.left, NotVoid);
-                visitExp(node.right, NotVoid);
+                visitExp(node.left, Void);
+                visitExp(node.right, Void);
                 return Primitive;
             case "AssignmentExpression":
                 if (typeof node.operator !== "string")
@@ -340,15 +343,15 @@ function inferTypes(asts) {
                 var p1 = visitExp(node.consequent, void_ctx);
                 var p2 = visitExp(node.alternate, void_ctx);
                 if (!void_ctx) {
-                    unify(typ, node.consequent, node.alternate);
+                    unify(node, node.consequent, node.alternate);
                 }
                 return p1 && p2;
             case "NewExpression":
             case "CallExpression":
                 var args = node.arguments || [];
-                visitExpr(node.callee, NotVoid);
+                visitExp(node.callee, NotVoid);
                 for (var i=0; i<args.length; i++) {
-                    visitExpr(args, NotVoid);
+                    visitExp(args, NotVoid);
                 }
                 if (node.callee.type === "FunctionExpression") {
                     var numArgs = Math.min(args.length, node.callee.params.length);
@@ -388,44 +391,108 @@ function inferTypes(asts) {
     }
 
     function visitStmt(node) {
+        if (node === null)
+            return;
         switch (node.type) {
             case "EmptyStatement":
                 break;
             case "BlockStatement":
+                node.body.forEach(visitStmt);
                 break;
             case "ExpressionStatement":
+                visitExp(node.body, Void);
                 break;
             case "IfStatement":
+                visitExp(node.test, Void);
+                visitStmt(node.consequent);
+                visitStmt(node.alternate);
                 break;
             case "LabeledStatement":
+                visitStmt(node.body);
                 break;
             case "BreakStatement":
                 break;
             case "ContinueStatement":
                 break;
             case "WithStatement":
+                visitExp(node.object, NotVoid);
+                visitStmt(node.body);
                 break;
             case "SwitchStatement":
+                var pr = visitExp(node.discriminant, NotVoid);
+                for (var i=0; i<node.cases.length; i++) {
+                    visitExp(node.test, pr ? Void : NotVoid);
+                    node.consequent.forEach(visitStmt);
+                }
                 break;
             case "ReturnStatement":
+                if (node.arguments !== null) {
+                    visitExp(node.argument, NotVoid);
+                    unify(node.argument, getVar("@return"));
+                }
                 break;
             case "ThrowStatement":
+                visitExp(node.argument, Void);
                 break;
             case "TryStatement":
+                visitStmt(node.block);
+                visitStmt(node.handler);
+                node.guardedHandlers.forEach(visitStmt);
+                visitStmt(node.finalizer);
+                break;
+            case "CatchClause":
+                node.env_type = env = new TypeMap; // create environment with exception var
+                envStack.push(env);
+                addVarToEnv(node.param.name);
+                visitExp(node.guard, Void);
+                visitStmt(node.body);
+                envStack.pop(); // restore original environment
+                env = envStack[envStack.length-1];
                 break;
             case "WhileStatement":
+                visitExp(node.test, Void);
+                visitStmt(node.body);
                 break;
             case "DoWhileStatement":
+                visitStmt(node.body);
+                visitExp(node.test, Void);
                 break;
             case "ForStatement":
+                if (node.init !== null && node.init.type === "VariableDeclaration") {
+                    visitStmt(node.init);
+                } else {
+                    visitExp(node.init, Void);
+                }
+                visitExp(node.test, Void);
+                visitExp(node.update, Void);
+                visitStmt(node.body);
                 break;
             case "ForInStatement":
+                if (node.left.type === "VariableDeclaration") {
+                    visitStmt(node.left);
+                } else {
+                    visitExp(node.left, Void);
+                }
+                visitExp(node.right, NotVoid);
+                visitStmt(node.body);
+                // note: `each` is always false in Esprima
                 break;
             case "DebuggerStatement":
                 break;
             case "FunctionDeclaration":
+                visitFunction(node);
+                unify(node, getVar(node.id.name)); // put function into its variable
                 break;
             case "VariableDeclaration":
+                for (var i=0; i<node.declarations.length; i++) {
+                    var decl = node.declarations[i];
+                    if (decl.init !== null) {
+                        var pr = visitExp(decl.init, NotVoid);
+                        if (!pr) {
+                            unify(getVar(decl.id.name), decl.init)
+                        }
+                    }
+                }
                 break;
             default:
                 throw "Unknown statement: " + node.type;
