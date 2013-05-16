@@ -160,6 +160,20 @@ function inferTypes(asts) {
             unifier.unify(x, getType(arguments[i]));
         }
     }
+    var potentialMethods = [];
+    function addPotentialMethod(base, receiver) {
+        potentialMethods.push(getType(base));
+        potentialMethods.push(getType(receiver));
+    }
+
+    function markAsNamespace(node) {
+        getType(node).rep().namespace = true;
+    }
+    function markAsConstructor(node) {
+        if (node.type === "MemberExpression") {
+            markAsNamespace(node.object);
+        }
+    }
 
     /** Scans statements for variable declarations and adds them to `env` */
     function scanVars(node) {
@@ -363,7 +377,10 @@ function inferTypes(asts) {
                         unify(global, thisType(node.callee));
                     }
                 }
-                return Primitive;
+                if (node.type === "NewExpression") {
+                    markAsConstructor(node.callee);
+                }
+                return NotPrimitive;
             case "MemberExpression":
                 visitExp(node.object, NotVoid);
                 if (node.computed) {
@@ -373,6 +390,9 @@ function inferTypes(asts) {
                     }
                 } else {
                     unify(node, getType(node.object).getPrty(node.property.name));
+                    if (node.property.name === "prototype") {
+                        markAsConstructor(node.object);
+                    }
                 }
                 return NotPrimitive;
             case "Identifier":
@@ -515,6 +535,15 @@ function inferTypes(asts) {
 
     unifier.complete();
 
+    for (var i=0; i<potentialMethods.length; i += 2) {
+        var base = potentialMethods[i].rep();
+        var receiver = potentialMethods[i+1].rep();
+        if (!base.namespace && !receiver.namespace) {
+            unifier.unifyLater(base, receiver); // unify later to ensure deterministic behaviour
+        }
+    }
+
+    unifier.complete();
 }
 
 if (require.main === module) {
