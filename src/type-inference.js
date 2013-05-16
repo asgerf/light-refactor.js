@@ -95,6 +95,9 @@ TypeUnifier.prototype.complete = function() {
 
 /**
  * Infer types for the given ProgramCollection.
+ * The following fields are injected into the AST:
+ * - `type_node` denotes the type of an expression
+ * - `env_type` is a TypeMap holding the types of variables in a function or catch clause
  */
 function inferTypes(asts) {
 
@@ -546,6 +549,40 @@ function inferTypes(asts) {
     unifier.complete();
 }
 
+function printTypes(ast) {
+    function children(node) {
+        var result = [];
+        for (var k in node) {
+            if (!node.hasOwnProperty(k))
+                continue;
+            var val = node[k];
+            if (!val)
+                continue;
+            if (typeof val === "object" && typeof val.type === "string") {
+                result.push(val);
+            }
+            else if (val instanceof Array) {
+                for (var i=0; i<val.length; i++) {
+                    var elm = val[i];
+                    if (typeof elm === "object" && typeof elm.type === "string") {
+                        result.push(elm);
+                    }
+                }
+            } 
+        }
+        return result;
+    }
+    function visit(node) {
+        switch (node.type) {
+            case "VariableDeclarator":
+                console.log(node.id.name);
+                break;
+        }
+        children(node).forEach(visit);
+    }
+    visit(ast);
+}
+
 if (require.main === module) {
     var es = require('../lib/esprima'), fs = require('fs');
     var text = fs.readFileSync(process.argv[2], {encoding:"utf8"});
@@ -553,4 +590,5 @@ if (require.main === module) {
     // console.dir(ast);
     // console.log(JSON.stringify(ast));
     inferTypes(ast);
+    printTypes(ast);
 }
