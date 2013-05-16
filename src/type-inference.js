@@ -1,5 +1,3 @@
-//var es = require('esprima');
-
 function TypeMap() {
 }
 TypeMap.prototype.put = function(key, val) {
@@ -227,9 +225,9 @@ function inferTypes(asts) {
         fun.env_type = env = new TypeMap; // create new environment
         envStack.push(env);
         for (var i=0; i<fun.params.length; i++) {
-            addVarToEnv(fun.params[i].id.name); // add params to env
+            addVarToEnv(fun.params[i].name); // add params to env
         }
-        scanVars(node.body); // add var decls to env
+        scanVars(fun.body); // add var decls to env
         if (expr && fun.id !== null) {
             addVarToEnv(fun.id.name); // add self-reference to environment
             unify(fun, env.get(fun.id.name));
@@ -248,7 +246,7 @@ function inferTypes(asts) {
         if (node === null)
             return null;
         if (typeof node !== "object" || !node.type)
-            throw "visitExp not called with node";
+            throw new Error("visitExp not called with node: " + node);
         switch (node.type) {
             case "FunctionExpression":
                 visitFunction(node, Expr);
@@ -351,7 +349,7 @@ function inferTypes(asts) {
                 var args = node.arguments || [];
                 visitExp(node.callee, NotVoid);
                 for (var i=0; i<args.length; i++) {
-                    visitExp(args, NotVoid);
+                    visitExp(args[i], NotVoid);
                 }
                 if (node.callee.type === "FunctionExpression") {
                     var numArgs = Math.min(args.length, node.callee.params.length);
@@ -381,7 +379,7 @@ function inferTypes(asts) {
                 if (node.name === "undefined") {
                     return Primitive;
                 }
-                unify(node, getVar(node.id.name));
+                unify(node, getVar(node.name));
                 return NotPrimitive;
             case "Literal":
                 return Primitive;
@@ -393,6 +391,8 @@ function inferTypes(asts) {
     function visitStmt(node) {
         if (node === null)
             return;
+        if (!node || !node.type)
+            throw new Error("Not a statement node: " + node);
         switch (node.type) {
             case "EmptyStatement":
                 break;
@@ -400,7 +400,7 @@ function inferTypes(asts) {
                 node.body.forEach(visitStmt);
                 break;
             case "ExpressionStatement":
-                visitExp(node.body, Void);
+                visitExp(node.expression, Void);
                 break;
             case "IfStatement":
                 visitExp(node.test, Void);
@@ -421,8 +421,9 @@ function inferTypes(asts) {
             case "SwitchStatement":
                 var pr = visitExp(node.discriminant, NotVoid);
                 for (var i=0; i<node.cases.length; i++) {
-                    visitExp(node.test, pr ? Void : NotVoid);
-                    node.consequent.forEach(visitStmt);
+                    var caze = node.cases[i];
+                    visitExp(caze.test, pr ? Void : NotVoid);
+                    caze.consequent.forEach(visitStmt);
                 }
                 break;
             case "ReturnStatement":
@@ -436,7 +437,7 @@ function inferTypes(asts) {
                 break;
             case "TryStatement":
                 visitStmt(node.block);
-                visitStmt(node.handler);
+                node.handlers.forEach(visitStmt);
                 node.guardedHandlers.forEach(visitStmt);
                 visitStmt(node.finalizer);
                 break;
@@ -444,7 +445,7 @@ function inferTypes(asts) {
                 node.env_type = env = new TypeMap; // create environment with exception var
                 envStack.push(env);
                 addVarToEnv(node.param.name);
-                visitExp(node.guard, Void);
+                // visitExp(node.guard, Void); // not used by esprima
                 visitStmt(node.body);
                 envStack.pop(); // restore original environment
                 env = envStack[envStack.length-1];
@@ -499,8 +500,28 @@ function inferTypes(asts) {
         }
     }
 
-    // TODO: visit AST
+    function visitRoot(node) {
+        switch (node.type) {
+            case 'Program':
+                node.body.forEach(visitStmt);
+                break;
+            case 'ProgramCollection':
+                node.programs.forEach(visitRoot);
+                break;
+        }
+    }
+
+    visitRoot(asts);
 
     unifier.complete();
 
+}
+
+if (require.main === module) {
+    var es = require('../lib/esprima'), fs = require('fs');
+    var text = fs.readFileSync(process.argv[2], {encoding:"utf8"});
+    var ast = es.parse(text);
+    // console.dir(ast);
+    // console.log(JSON.stringify(ast));
+    inferTypes(ast);
 }
