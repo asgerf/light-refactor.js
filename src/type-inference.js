@@ -104,7 +104,7 @@ function inferTypes(asts) {
 
     var global = new TypeNode;
     var envStack = [];
-    var env = new TypeMap;
+    var env = new TypeMap; // alias of top-most environment
 
     var Primitive = true;
     var NotPrimitive = false;
@@ -139,14 +139,21 @@ function inferTypes(asts) {
         }
         return node.type_node;
     }
+    function getEnv(scope) {
+        return scope.env_type || (scope.env_type = new TypeMap);
+    }
     function thisType(fun) {
-        throw "TODO thisType";
+        return getEnv(fun).getPrty("@this");
     }
     function returnType(fun) {
-        throw "TODO returnType";
+        return getEnv(fun).getPrty("@return");
     }
     function argumentType(fun, index) {
-        throw "TODO argumentType";
+        if (index < fun.params.length) {
+            return getEnv(fun).getPrty(fun.params[index]);
+        } else {
+            return new TypeNode;
+        }
     }
 
     function unify(x) {
@@ -217,7 +224,7 @@ function inferTypes(asts) {
     }
 
     function visitFunction(fun, expr) {
-        env = new TypeMap; // create new environment
+        fun.env_type = env = new TypeMap; // create new environment
         envStack.push(env);
         for (var i=0; i<fun.params.length; i++) {
             addVarToEnv(fun.params[i].id.name); // add params to env
@@ -229,7 +236,7 @@ function inferTypes(asts) {
         addVarToEnv("@this");
         addVarToEnv("@return");
         addVarToEnv("arguments");
-        visitStmt(fun.body); // visit function bdoy
+        visitStmt(fun.body); // visit function body
         envStack.pop(); // restore original environment
         env = envStack[envStack.length-1];
     }
