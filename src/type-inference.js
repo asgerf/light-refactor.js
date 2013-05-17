@@ -572,29 +572,29 @@ function typeSchema(type, names) {
     return schema;
 }
 
-function printTypes(ast) {
-    function children(node) {
-        var result = [];
-        for (var k in node) {
-            if (!node.hasOwnProperty(k))
-                continue;
-            var val = node[k];
-            if (!val)
-                continue;
-            if (typeof val === "object" && typeof val.type === "string") {
-                result.push(val);
-            }
-            else if (val instanceof Array) {
-                for (var i=0; i<val.length; i++) {
-                    var elm = val[i];
-                    if (typeof elm === "object" && typeof elm.type === "string") {
-                        result.push(elm);
-                    }
-                }
-            } 
+function children(node) {
+    var result = [];
+    for (var k in node) {
+        if (!node.hasOwnProperty(k))
+            continue;
+        var val = node[k];
+        if (!val)
+            continue;
+        if (typeof val === "object" && typeof val.type === "string") {
+            result.push(val);
         }
-        return result;
+        else if (val instanceof Array) {
+            for (var i=0; i<val.length; i++) {
+                var elm = val[i];
+                if (typeof elm === "object" && typeof elm.type === "string") {
+                    result.push(elm);
+                }
+            }
+        } 
     }
+    return result;
+}
+function printTypes(ast) {
     function visit(node) {
         switch (node.type) {
             case "VariableDeclarator":
@@ -608,12 +608,137 @@ function printTypes(ast) {
     visit(ast);
 }
 
+function Location(file, position) {
+    this.file = file;
+    this.position = position;
+}
+function Range(file, start, end) {
+    this.file = file;
+    this.start = start;
+    this.end = end;;
+}
+
+function Access(base, id) {
+    this.base = base;
+    this.id = id;
+}
+
+function inRange(range, x) {
+    return range[0] <= x && x <= range[1];
+}
+function findAccess(node, offset) {
+    if (node.range[0] > offset || node.range[1] < offset)
+        return null;
+    if (node.type === "MemberExpression" && !node.computed && inRange(node.property.range, offset)) {
+        return new Access(node.object, node.property);
+    } else if (node.type === "ObjectExpression") {
+        for (var i=0; i<node.properties.length; i++) {
+            var prty = node.properties[i];
+            if (inRange(prty.id, offset)) {
+                return new Access(node, node.property);
+            }
+        }
+    }
+    // access not found here, recurse on children
+    var ch = children(node);
+    for (var i=0; i<ch.length; i++) {
+        var acc = findAccess(ch[i]);
+        if (ac !== null) {
+            return ac;
+        }
+    }
+    return null;
+}
+
+function computeRenamingGroupsForName(ast, name) {
+    var currentFile = null;
+    var group2members = {};
+    function add(base, id) {
+        var key = base.type_node.rep().id;
+        if (!group2members[key]) {
+            group2members[key] = [];
+        }
+        var range;
+        if (id.type === 'Identifier') {
+            range = new Range(currentFile, id.range[0], id.range[1]);
+        } else if (id.type === 'Literal' && typeof id.value === 'string') {
+            range = new Range(currentFile, id.range[0]+1, id.range[1]-1); // skip quotes on string literal
+        } else {
+            return; // ignore integer literals
+        }
+        group2members[key].push(range);
+    }
+    function visit(node) {
+        if (node.type === 'MemberExpression' && !node.computed && node.property.name === name) {
+            add(node.object, node.property);
+        } else if (node.type === 'ObjectExpression') {
+            for (var i=0; i<node.properties.length; i++) {
+                var prty = node.properties[i];
+                if (prty.id.name === name) {
+                    add(node, prty.id);
+                }
+            }
+        }
+        if (node.type === 'Program') {
+            currentFile = node.file;
+        }
+        children(node).forEach(visit);
+        if (node.type === 'Program') {
+            currentFile = null;
+        }
+    }
+    visit(ast);
+    var groups = [];
+    for (var k in group2members) {
+        if (!group2members.hasOwnProperty(k))
+            continue;
+        groups.push(group2members[k]);
+    }
+    return groups;
+}
+
+function reorderGroupsStartingAt(groups, targetLoc) {
+    // TODO
+}
+
+/**
+ * Computes a Range[][] object such that each Range[] in the topmost array should be renamed together.
+ * The `asts` argument can be a `Program` or a `ProgramCollection` satisfying the following:
+ * - Must be parsed with Esprima option `ranges:true`
+ * - Must have types inferred using `inferTypes`
+ * - One `Program` node must have a `file` field whose value equals `targetLoc.file`.
+ */
+function computeRenaming(ast, targetLoc) {
+    var targetAst = null;
+    if (ast.type === "Program" && ast.file === targetLoc.file) {
+        targetAst = ast;
+    } else if (ast.type === "ProgramCollection") {
+        for (var i=0; i<ast.programs.length; i++) {
+            if (ast.programs[i].file === targetLoc.file) {
+                targetAst = ast.programs[i];
+                break;
+            }
+        }
+    }
+    if (targetAst === null) {
+        throw new Error("Could not find AST for file " + targetLoc.file);
+    }
+    var targetAccess = findAccess(targetAst, targetLoc.offset);
+    var targetName = targetAccess.id.name;
+    var groups = computeRenamingGroupsForName(targetName);
+    reorderGroupsStartingAt(groups, targetLoc);
+    return groups;
+}
+
 if (require.main === module) {
     var es = require('../lib/esprima'), fs = require('fs');
     var text = fs.readFileSync(process.argv[2], {encoding:"utf8"});
-    var ast = es.parse(text);
-    // console.dir(ast);
+    var ast = es.parse(text, {range:true});
+    // console.d
+    //console.dir(ast.range);
     // console.log(JSON.stringify(ast));
     inferTypes(ast);
-    printTypes(ast);
+    // computeRenaming(ast);
+    // printTypes(ast);
+
 }
