@@ -642,7 +642,7 @@ function Location(file, position) {
 function Range(file, start, end) {
     this.file = file;
     this.start = start;
-    this.end = end;;
+    this.end = end;
 }
 
 function Access(base, id) {
@@ -654,7 +654,7 @@ function inRange(range, x) {
     return range[0] <= x && x <= range[1];
 }
 function findAccess(node, offset) {
-    if (node.range[0] > offset || node.range[1] < offset)
+    if (!inRange(node.range, offset))
         return null;
     if (node.type === "MemberExpression" && !node.computed && inRange(node.property.range, offset)) {
         return new Access(node.object, node.property);
