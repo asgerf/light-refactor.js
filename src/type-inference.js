@@ -7,21 +7,23 @@ TypeMap.prototype.get = function(key) {
     return this['$' + key];
 };
 TypeMap.prototype.has = function(key) {
-    return Object.hasOwnProperty(this, '$' + key);
+    return this.hasOwnProperty('$' + key);
 };
 TypeMap.prototype.remove = function(key) {
     delete this['$' + key];
 };
 TypeMap.prototype.forEach = function(callback) {
     for (var k in this) {
-        if (!Object.hasOwnProperty(this,k)) {
+        if (!this.hasOwnProperty(k)) {
             continue;
         }
         callback(k.substring(1), this[k]);
     }
 };
 
+var type_node_id = 0;
 function TypeNode() {
+    this.id = ++type_node_id;
     this.parent = this;
     this.rank = 0;
     this.prty = new TypeMap;
@@ -51,14 +53,14 @@ function TypeUnifier() {
 TypeUnifier.prototype.unify = function(x,y) {
     x = x.rep();
     y = y.rep();
-    if (x == y)
+    if (x === y)
         return;
     if (x.rank < y.rank) {
         // swap x,y so x has the highest rank
         var z = x;
         x = y;
         y = z;
-    } else if (x.rank == y.rank) {
+    } else if (x.rank === y.rank) {
         x.rank += 1;
     }
     y.parent = x;
@@ -66,9 +68,9 @@ TypeUnifier.prototype.unify = function(x,y) {
     var src = y.prty;
     var dst = x.prty;
     for (var k in src) {
-        if (!Object.hasOwnProperty(src,k))
+        if (!src.hasOwnProperty(k))
             continue;
-        if (Object.hasOwnProperty(dst,k)) {
+        if (dst.hasOwnProperty(k)) {
             this.unifyLater(src[k], dst[k]);
         } else {
             dst[k] = src[k];
@@ -243,11 +245,13 @@ function inferTypes(asts) {
         envStack.push(env);
         for (var i=0; i<fun.params.length; i++) {
             addVarToEnv(fun.params[i].name); // add params to env
+            fun.params[i].type_node = env.get(fun.params[i].name);
         }
         scanVars(fun.body); // add var decls to env
         if (expr && fun.id !== null) {
             addVarToEnv(fun.id.name); // add self-reference to environment
             unify(fun, env.get(fun.id.name));
+            fun.id.type_node = fun.type_node;
         }
         addVarToEnv("@this");
         addVarToEnv("@return");
@@ -516,6 +520,7 @@ function inferTypes(asts) {
                             unify(getVar(decl.id.name), decl.init)
                         }
                     }
+                    decl.id.type_node = getVar(decl.id.name);
                 }
                 break;
             default:
@@ -549,6 +554,22 @@ function inferTypes(asts) {
     unifier.complete();
 }
 
+function typeSchema(type, names) {
+    type = type.rep();
+    // console.dir(type);
+    names = names || {};
+    if (names[type.id]) {
+        return names[type.id];
+    }
+    var schema = {};
+    names[type.id] = "recursive[" + type.id + "]";
+    type.prty.forEach(function (key,val) {
+        schema[key] = typeSchema(val, names);
+    });
+    delete names[type.id];
+    return schema;
+}
+
 function printTypes(ast) {
     function children(node) {
         var result = [];
@@ -575,7 +596,9 @@ function printTypes(ast) {
     function visit(node) {
         switch (node.type) {
             case "VariableDeclarator":
-                console.log(node.id.name);
+                var type = node.id.type_node.rep();
+                var schema = typeSchema(type);
+                console.log(node.id.name + " " + JSON.stringify(schema));
                 break;
         }
         children(node).forEach(visit);
