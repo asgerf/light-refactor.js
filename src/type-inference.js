@@ -1,3 +1,23 @@
+/*
+Unification-Based Type Inference for JavaScript
+===============================================
+ 
+We use Esprima's AST definition (which itself is based on Mozilla's API) but with the following additions:
+- There is a new type of node called `ProgramCollection`:
+    interface ProgramCollection {
+        programs : [Program | ProgramCollection]
+        file : String | null
+    }
+- The `Program` node may have a `file` attribute:
+    interface Program {
+        ...
+        file : String | null
+    }
+Any Program that does not have a `file` should be placed inside a `ProgramCollection` that has a file.
+This design allows code bases with many files to be represented in a unified AST.
+Two nodes should not have the same `file`. 
+*/
+
 function TypeMap() {
 }
 TypeMap.prototype.put = function(key, val) {
@@ -608,6 +628,13 @@ function printTypes(ast) {
     visit(ast);
 }
 
+/**
+ * Denotes a position in a file.
+ * - `file` is a string uniquely identifying the file in question
+ * - `position` is the absolute index in the source code of the given file
+ * 
+ * The `file` field need not be a valid path in any file system; it may be any string.
+ */
 function Location(file, position) {
     this.file = file;
     this.position = position;
@@ -706,7 +733,7 @@ function reorderGroupsStartingAt(groups, targetLoc) {
  * The `asts` argument can be a `Program` or a `ProgramCollection` satisfying the following:
  * - Must be parsed with Esprima option `ranges:true`
  * - Must have types inferred using `inferTypes`
- * - One `Program` node must have a `file` field whose value equals `targetLoc.file`.
+ * - All `Program` nodes must have a `file` field, and one of those must hold a value equal to `targetLoc.file`.
  */
 function computeRenaming(ast, targetLoc) {
     var targetAst = null;
