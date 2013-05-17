@@ -394,6 +394,8 @@ function inferTypes(asts) {
                     visitExp(node.property, Void);
                     if (node.property.type === "Literal" && typeof node.property.value === "string") {
                         unify(node, getType(node.object).getPrty(node.property.value));
+                    } else {
+                        unify(node.property.getPrty("@prty-of"), node.object);
                     }
                 } else {
                     unify(node, getType(node.object).getPrty(node.property.name));
