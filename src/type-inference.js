@@ -765,6 +765,12 @@ if (require.main === module) {
     //console.dir(ast.range);
     // console.log(JSON.stringify(ast));
     inferTypes(ast);
+    var groups = computeRenamingGroupsForName(ast, "add");
+    groups.forEach(function(group) {
+        var texts = group.map(function(range) {return text.substring(range.start, range.end);});
+        console.log(texts.join(", "));
+    });
+    // console.dir(groups);
     // computeRenaming(ast);
     // printTypes(ast);
 
