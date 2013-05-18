@@ -1,46 +1,29 @@
-/*
-Unification-Based Type Inference for JavaScript
-===============================================
+// Unification-Based Type Inference for JavaScript
+// ===============================================
  
-We use Esprima's AST definition (which itself is based on Mozilla's API) but with the following additions:
-- There is a new type of node called `ProgramCollection`:
-    interface ProgramCollection {
-        programs : [Program | ProgramCollection]
-        file : String | null
-    }
-- The `Program` node may have a `file` attribute:
-    interface Program {
-        ...
-        file : String | null
-    }
-Any Program that does not have a `file` should be placed inside a `ProgramCollection` that has a file.
-This design allows code bases with many files to be represented in a unified AST.
-Two nodes should not have the same `file`. 
-*/
+// We use Esprima's AST definition (which itself is based on Mozilla's API) but with the following additions:
+//
+// - There is a new type of node called `ProgramCollection`:
+//       interface ProgramCollection {
+//           programs : [Program | ProgramCollection]
+//           file : String | null
+//       }
+// - The `Program` node may have a `file` attribute:
+//       interface Program {
+//          ...
+//          file : String | null
+//       }
+//
+// Any Program that does not have a `file` should be placed inside a `ProgramCollection` that has a file.
+// This design allows code bases with many files to be represented in a unified AST.
+// Two nodes should not have the same `file`. 
 
-function TypeMap() {
-}
-TypeMap.prototype.put = function(key, val) {
-    this['$' + key] = val;
-};
-TypeMap.prototype.get = function(key) {
-    return this['$' + key];
-};
-TypeMap.prototype.has = function(key) {
-    return this.hasOwnProperty('$' + key);
-};
-TypeMap.prototype.remove = function(key) {
-    delete this['$' + key];
-};
-TypeMap.prototype.forEach = function(callback) {
-    for (var k in this) {
-        if (!this.hasOwnProperty(k)) {
-            continue;
-        }
-        callback(k.substring(1), this[k]);
-    }
-};
-
+// Types and Union-Find
+// --------------------
+// A `TypeNode` is a node in an augmented union-find data structure. Root nodes represent types.
+// The `prty` field maps strings (property names) to type nodes.
+// The `namespace` boolean denotes whether the type seems to be a namespace object.
+// The `id` field is a unique identifier for each node.
 var type_node_id = 0;
 function TypeNode() {
     this.id = ++type_node_id;
@@ -67,6 +50,34 @@ TypeNode.prototype.getPrty = function(name) {
     return t;
 }
 
+// A `TypeMap` maps strings to type nodes. It is used to store the property types of
+// type nodes, and for environments.
+function TypeMap() {
+}
+TypeMap.prototype.put = function(key, val) {
+    this['$' + key] = val;
+};
+TypeMap.prototype.get = function(key) {
+    return this['$' + key];
+};
+TypeMap.prototype.has = function(key) {
+    return this.hasOwnProperty('$' + key);
+};
+TypeMap.prototype.remove = function(key) {
+    delete this['$' + key];
+};
+TypeMap.prototype.forEach = function(callback) {
+    for (var k in this) {
+        if (!this.hasOwnProperty(k)) {
+            continue;
+        }
+        callback(k.substring(1), this[k]);
+    }
+};
+
+// The `TypeUnifier` implements the unification procedure of the union-find algorithm.
+// Calling `unify(x,y)` will unify x and y. The `prty` maps of x and y will be partially
+// merged; the merging will be completed by calling the `complete` method.
 function TypeUnifier() {
     this.queue = [];
 }
@@ -76,8 +87,7 @@ TypeUnifier.prototype.unify = function(x,y) {
     if (x === y)
         return;
     if (x.rank < y.rank) {
-        // swap x,y so x has the highest rank
-        var z = x;
+        var z = x; // swap x,y so x has the highest rank
         x = y;
         y = z;
     } else if (x.rank === y.rank) {
@@ -115,37 +125,21 @@ TypeUnifier.prototype.complete = function() {
     }
 };
 
-/**
- * Infer types for the given ProgramCollection.
- * The following fields are injected into the AST:
- * - `type_node` denotes the type of an expression
- * - `env_type` is a TypeMap holding the types of variables in a function or catch clause
- */
+// Type Inference
+// --------------
+// The type inference procedure initially assumes all expressions have distinct
+// types, and then unifies types based on a single traversal of the AST.
 function inferTypes(asts) {
-
     var unifier = new TypeUnifier;
 
-    var global = new TypeNode;
-    var envStack = [];
-    var env = new TypeMap; // alias of top-most environment
+    var global = new TypeNode; // type of the global object
 
-    var Primitive = true;
-    var NotPrimitive = false;
+    // We maintain a stack of type maps to hold the types of local variables in the current scopes.
+    // `env` always holds the top-most environment.
+    var env = new TypeMap;
+    var envStack = [env]; 
 
-    var Void = true;
-    var NotVoid = false;
-
-    var Expr = true;
-    var NotExpr = false;
-
-    function addVarToEnv(name) {
-        if (typeof name !== "string")
-            throw "Not a string: " + name;
-        if (!env.has(name)) {
-            env.put(name, new TypeNode);
-        }
-    }
-
+    /** Get type of variable with the given name */
     function getVar(name) {
         for (var i=envStack.length-1; i>=0; i--) {
             var t = envStack[i].get(name);
@@ -154,53 +148,17 @@ function inferTypes(asts) {
         }
         return global.getPrty(name);
     }
-    function getType(node) {
-        if (node instanceof TypeNode)
-            return node;
-        if (!node.type_node) {
-            node.type_node = new TypeNode;
-        }
-        return node.type_node;
-    }
-    function getEnv(scope) {
-        return scope.env_type || (scope.env_type = new TypeMap);
-    }
-    function thisType(fun) {
-        return getEnv(fun).getPrty("@this");
-    }
-    function returnType(fun) {
-        return getEnv(fun).getPrty("@return");
-    }
-    function argumentType(fun, index) {
-        if (index < fun.params.length) {
-            return getEnv(fun).getPrty(fun.params[index]);
-        } else {
-            return new TypeNode;
+
+    /** Add variable to current environment. Used when entering a new scope. */
+    function addVarToEnv(name) {
+        if (typeof name !== "string")
+            throw "Not a string: " + name;
+        if (!env.has(name)) {
+            env.put(name, new TypeNode);
         }
     }
 
-    function unify(x) {
-        x = getType(x);
-        for (var i=1; i<arguments.length; i++) {
-            unifier.unify(x, getType(arguments[i]));
-        }
-    }
-    var potentialMethods = [];
-    function addPotentialMethod(base, receiver) {
-        potentialMethods.push(getType(base));
-        potentialMethods.push(getType(receiver));
-    }
-
-    function markAsNamespace(node) {
-        getType(node).rep().namespace = true;
-    }
-    function markAsConstructor(node) {
-        if (node.type === "MemberExpression") {
-            markAsNamespace(node.object);
-        }
-    }
-
-    /** Scans statements for variable declarations and adds them to `env` */
+    /** Scans a function body for variable declarations and adds them to the current environment */
     function scanVars(node) {
         if (node === null)
             return;
@@ -260,6 +218,79 @@ function inferTypes(asts) {
         }
     }
 
+    // We create type nodes on-demand and inject them into the AST using `getType` and `getEnv`.
+    /* Type of the given expression. For convenience acts as identity on type nodes */
+    function getType(node) {
+        if (node instanceof TypeNode)
+            return node;
+        if (!node.type_node) {
+            node.type_node = new TypeNode;
+        }
+        return node.type_node;
+    }
+    /** Environment of the given scope node (function or catch clause) */
+    function getEnv(scope) {
+        return scope.env_type || (scope.env_type = new TypeMap);
+    }
+
+    // We model the type of "this" using a fake local variable called `@this`.
+    // The return type of a function is modeled with a variable called `@return`.
+    function thisType(fun) {
+        return getEnv(fun).getPrty("@this");
+    }
+    function returnType(fun) {
+        return getEnv(fun).getPrty("@return");
+    }
+    function argumentType(fun, index) {
+        if (index < fun.params.length) {
+            return getEnv(fun).getPrty(fun.params[index]);
+        } else {
+            return new TypeNode;
+        }
+    }
+
+    // The `unify` function takes a number of AST nodes and/or type nodes and unifies their types.
+    // It will be used a lot during the AST traversal.
+    function unify(x) {
+        x = getType(x);
+        for (var i=1; i<arguments.length; i++) {
+            unifier.unify(x, getType(arguments[i]));
+        }
+    }
+
+    // To properly infer the receiver type of methods, we need a way to distinguish methods
+    // from constructors in namespaces. These methods are called during the first traversal
+    // to indicate potential methods, and what objects appear to be used as namespaces.
+    var potentialMethods = [];
+    function addPotentialMethod(base, receiver) {
+        potentialMethods.push(getType(base));
+        potentialMethods.push(getType(receiver));
+    }
+
+    function markAsNamespace(node) {
+        getType(node).rep().namespace = true;
+    }
+    function markAsConstructor(node) {
+        if (node.type === "MemberExpression") {
+            markAsNamespace(node.object);
+        }
+    }
+
+    // We use these constants to avoid confusing boolean constants
+    var Primitive = true;
+    var NotPrimitive = false;
+
+    var Void = true;
+    var NotVoid = false;
+
+    var Expr = true;
+    var NotExpr = false;
+
+    // The AST traversal consists of three mutually recursive functions:
+    //
+    // - `visitStmt(node)`
+    // - `visitExp(node, void_ctx)`.
+    // - `visitFunction(fun, expr)`.
     function visitFunction(fun, expr) {
         fun.env_type = env = new TypeMap; // create new environment
         envStack.push(env);
@@ -433,7 +464,7 @@ function inferTypes(asts) {
             case "Literal":
                 return Primitive;
         }
-        // The cases must return Primitive or NotPrimitive
+        /* The cases must return Primitive or NotPrimitive */
         throw "Expression " + node.type + " not handled";
     }
 
@@ -494,7 +525,6 @@ function inferTypes(asts) {
                 node.env_type = env = new TypeMap; // create environment with exception var
                 envStack.push(env);
                 addVarToEnv(node.param.name);
-                // visitExp(node.guard, Void); // not used by esprima
                 visitStmt(node.body);
                 envStack.pop(); // restore original environment
                 env = envStack[envStack.length-1];
@@ -525,7 +555,7 @@ function inferTypes(asts) {
                 }
                 visitExp(node.right, NotVoid);
                 visitStmt(node.body);
-                // note: `each` is always false in Esprima
+                /* note: `each` is always false in Esprima */
                 break;
             case "DebuggerStatement":
                 break;
@@ -550,6 +580,7 @@ function inferTypes(asts) {
         }
     }
 
+    // We start the AST traversal with a call to visitRoot
     function visitRoot(node) {
         switch (node.type) {
             case 'Program':
@@ -563,22 +594,26 @@ function inferTypes(asts) {
 
     visitRoot(asts);
 
+    // After the initial traversal, we satisfy the saturation rules to ensure we have detected namespaces.
+    // Then we apply receiver-type inference and complete the unification again.
     unifier.complete();
-
     for (var i=0; i<potentialMethods.length; i += 2) {
         var base = potentialMethods[i].rep();
         var receiver = potentialMethods[i+1].rep();
         if (!base.namespace && !receiver.namespace) {
-            unifier.unifyLater(base, receiver); // unify later to ensure deterministic behaviour
+            /* unify later to ensure deterministic behaviour */
+            unifier.unifyLater(base, receiver); 
         }
     }
-
     unifier.complete();
-}
+} /* end of inferTypes */
 
+// Type Schemas
+// ------------
+// Type schemas are a way to showing types for human inspection and for exporting to other systems.
+// This converts a type node to a type schema. For far, recursion is controlled in a fairly mundane manner.
 function typeSchema(type, names) {
     type = type.rep();
-    // console.dir(type);
     names = names || {};
     if (names[type.id]) {
         return names[type.id];
@@ -657,20 +692,29 @@ function findAccess(node, offset) {
     if (!inRange(node.range, offset))
         return null;
     if (node.type === "MemberExpression" && !node.computed && inRange(node.property.range, offset)) {
-        return new Access(node.object, node.property);
+        return {type:"property", base:node.object, id:node.property};// new Access(node.object, node.property);
     } else if (node.type === "ObjectExpression") {
         for (var i=0; i<node.properties.length; i++) {
             var prty = node.properties[i];
             if (inRange(prty.id, offset)) {
-                return new Access(node, node.property);
+                return {type:"property", base:node, id:node.property};// new Access(node, node.property);
             }
         }
+    } else if (node.type === "LabeledStatement" && inRange(node.label.range, offset)) {
+        return {type:"label", base:null, id:node.label};
+    } else if ((node.type === "BreakStatement" || node.type === "ContinueStatement") && node.label && inRange(node.label.range, offset)) {
+        return {type:"label", base:null, id:node.label};
+    } else if (node.type === "Identifier")) {
+        return {type:"global", base:null, id:node};
     }
     // access not found here, recurse on children
     var ch = children(node);
     for (var i=0; i<ch.length; i++) {
         var acc = findAccess(ch[i]);
         if (ac !== null) {
+            if (ac.type === "global" && (node.type === "FunctionDeclaration" || node.type === "FunctionExpression")) {
+                var vars = scanVars(node);
+            }
             return ac;
         }
     }
