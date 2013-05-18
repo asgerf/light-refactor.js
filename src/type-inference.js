@@ -98,6 +98,8 @@ TypeUnifier.prototype.unify = function(x,y) {
     var src = y.prty;
     var dst = x.prty;
     for (var k in src) {
+        if (k[0] !== '$')
+            continue;
         if (!src.hasOwnProperty(k))
             continue;
         if (dst.hasOwnProperty(k)) {
@@ -704,7 +706,7 @@ function findAccess(node, offset) {
         return {type:"label", base:null, id:node.label};
     } else if ((node.type === "BreakStatement" || node.type === "ContinueStatement") && node.label && inRange(node.label.range, offset)) {
         return {type:"label", base:null, id:node.label};
-    } else if (node.type === "Identifier")) {
+    } else if (node.type === "Identifier") {
         return {type:"global", base:null, id:node};
     }
     // access not found here, recurse on children
