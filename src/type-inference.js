@@ -703,19 +703,27 @@ function findAccess(node, offset) {
             }
         }
     } else if (node.type === "LabeledStatement" && inRange(node.label.range, offset)) {
-        return {type:"label", base:null, id:node.label};
+        return {type:"label", decl:node, id:node.label};
     } else if ((node.type === "BreakStatement" || node.type === "ContinueStatement") && node.label && inRange(node.label.range, offset)) {
-        return {type:"label", base:null, id:node.label};
+        return {type:"label", decl:null, id:node.label};
     } else if (node.type === "Identifier") {
-        return {type:"global", base:null, id:node};
+        return {type:"global", id:node};
     }
     // access not found here, recurse on children
     var ch = children(node);
     for (var i=0; i<ch.length; i++) {
         var acc = findAccess(ch[i]);
         if (ac !== null) {
-            if (ac.type === "global" && (node.type === "FunctionDeclaration" || node.type === "FunctionExpression")) {
-                var vars = scanVars(node);
+            if (ac.type === "global" && (node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "CatchClause")) {
+                if (node.env_type.has(node.id.name)) {
+                    ac.type = "local";
+                    ac.scope = node;
+                }
+            }
+            else if (ac.type == "label" && (node.type === "LabeledStatement")) {
+                if (node.decl === null && node.label.name === ac.id.name) {
+                    ac.decl = node;
+                }
             }
             return ac;
         }
