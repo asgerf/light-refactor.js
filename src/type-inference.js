@@ -1,6 +1,31 @@
 // Unification-Based Type Inference for JavaScript
 // ===============================================
 
+// Map Datatype
+// ------------
+// We need a simple way to represent maps with string keys.
+function Map() {
+}
+Map.prototype.put = function(key, val) {
+    this['$' + key] = val;
+};
+Map.prototype.get = function(key) {
+    return this['$' + key];
+};
+Map.prototype.has = function(key) {
+    return this.hasOwnProperty('$' + key);
+};
+Map.prototype.remove = function(key) {
+    delete this['$' + key];
+};
+Map.prototype.forEach = function(callback) {
+    for (var k in this) {
+        if (!this.hasOwnProperty(k)) {
+            continue;
+        }
+        callback(k.substring(1), this[k]);
+    }
+};
 
 // Ast Manipulation
 // ----------------
@@ -53,6 +78,41 @@ function getEnclosingFunction(node) {
     return node;
 }
 
+
+// We annotate each scope with the set of variables they declare.
+function buildEnvs(node, scope) {
+    if (node.type === 'Program') {
+        scope = node;
+        scope.$env = new Map;
+    }
+    switch (node.type) {
+        case 'FunctionDeclaration':
+        case 'FunctionExpression':
+            if (node.type == 'FunctionDeclaration') {
+                scope.$env.put(node.id.name, node.id);
+            }
+            scope = node;
+            node.$env = new Map;
+            for (var i=0; i<node.params.length; i++) {
+                scope.$env.put(node.params[i].name, node.params[i]);
+            }
+            node.$env.put("arguments", node);
+            break;
+        case 'VariableDeclarator':
+            scope.$env.put(node.id.name, node.id);
+            break;
+        case 'CatchClause':
+            node.$env = new Map;
+            node.$env.put(node.id.name, node.id);
+            break;
+    }
+    var list = children(node);
+    for (var i=0; i<list.length; i++) {
+        buildEnvs(list[i], scope);
+    }
+}
+
+
 // `findNodeAt` finds an AST node from an absolute source file position. More precisely, it finds the
 // deepest nested node whose range contains the given position. It lets us find the identifier token
 // under the user's curser when the refactoring is initiated.
@@ -101,39 +161,6 @@ function findAstForFile(node, file) {
     return null;
 }
 
-// We annotate each scope with the set of variables they declare.
-function buildEnvs(node, scope) {
-    if (node.type === 'Program') {
-        scope = node;
-        scope.$env = new TypeMap;
-    }
-    switch (node.type) {
-        case 'FunctionDeclaration':
-        case 'FunctionExpression':
-            if (node.type == 'FunctionDeclaration') {
-                scope.$env.put(node.id.name, node.id);
-            }
-            scope = node;
-            node.$env = new TypeMap;
-            for (var i=0; i<node.params.length; i++) {
-                scope.$env.put(node.params[i].name, node.params[i]);
-            }
-            node.$env.put("arguments", node);
-            break;
-        case 'VariableDeclarator':
-            scope.$env.put(node.id.name, node.id);
-            break;
-        case 'CatchClause':
-            node.$env = new TypeMap;
-            node.$env.put(node.id.name, node.id);
-            break;
-    }
-    var list = children(node);
-    for (var i=0; i<list.length; i++) {
-        buildEnvs(list[i], scope);
-    }
-}
-
 // Types and Union-Find
 // --------------------
 // A `TypeNode` is a node in an augmented union-find data structure. Root nodes represent types.
@@ -145,7 +172,7 @@ function TypeNode() {
     this.id = ++type_node_id;
     this.parent = this;
     this.rank = 0;
-    this.prty = new TypeMap;
+    this.prty = new Map;
     this.namespace = false;
 }
 /** Returns root node, and performs path compression */
@@ -169,30 +196,6 @@ TypeNode.prototype.getPrty = function(name) {
     return t.rep();
 }
 
-// A `TypeMap` maps strings to type nodes. It is used to store the property types of
-// type nodes, and for environments.
-function TypeMap() {
-}
-TypeMap.prototype.put = function(key, val) {
-    this['$' + key] = val;
-};
-TypeMap.prototype.get = function(key) {
-    return this['$' + key];
-};
-TypeMap.prototype.has = function(key) {
-    return this.hasOwnProperty('$' + key);
-};
-TypeMap.prototype.remove = function(key) {
-    delete this['$' + key];
-};
-TypeMap.prototype.forEach = function(callback) {
-    for (var k in this) {
-        if (!this.hasOwnProperty(k)) {
-            continue;
-        }
-        callback(k.substring(1), this[k]);
-    }
-};
 
 // The `TypeUnifier` implements the unification procedure of the union-find algorithm.
 // Calling `unify(x,y)` will unify x and y. The `prty` maps of x and y will be partially
@@ -258,7 +261,7 @@ function inferTypes(asts) {
 
     // We maintain a stack of type maps to hold the types of local variables in the current scopes.
     // `env` always holds the top-most environment.
-    var env = new TypeMap;
+    var env = new Map;
     var envStack = [env]; 
 
     /** Get type of variable with the given name */
@@ -352,7 +355,7 @@ function inferTypes(asts) {
     }
     /** Environment of the given scope node (function or catch clause) */
     function getEnv(scope) {
-        return scope.env_type || (scope.env_type = new TypeMap);
+        return scope.env_type || (scope.env_type = new Map);
     }
 
     // We model the type of "this" using a fake local variable called `@this`.
@@ -414,7 +417,7 @@ function inferTypes(asts) {
     // - `visitExp(node, void_ctx)`.
     // - `visitFunction(fun, expr)`.
     function visitFunction(fun, expr) {
-        fun.env_type = env = new TypeMap; // create new environment
+        fun.env_type = env = new Map; // create new environment
         envStack.push(env);
         for (var i=0; i<fun.params.length; i++) {
             addVarToEnv(fun.params[i].name); // add params to env
@@ -644,7 +647,7 @@ function inferTypes(asts) {
                 visitStmt(node.finalizer);
                 break;
             case "CatchClause":
-                node.env_type = env = new TypeMap; // create environment with exception var
+                node.env_type = env = new Map; // create environment with exception var
                 envStack.push(env);
                 addVarToEnv(node.param.name);
                 visitStmt(node.body);
