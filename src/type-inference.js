@@ -101,6 +101,38 @@ function findAstForFile(node, file) {
     return null;
 }
 
+// We annotate each scope with the set of variables they declare.
+function buildEnvs(node, scope) {
+    if (node.type === 'Program') {
+        scope = node;
+        scope.$env = new TypeMap;
+    }
+    switch (node.type) {
+        case 'FunctionDeclaration':
+        case 'FunctionExpression':
+            if (node.type == 'FunctionDeclaration') {
+                scope.$env.put(node.id.name, node.id);
+            }
+            scope = node;
+            node.$env = new TypeMap;
+            for (var i=0; i<node.params.length; i++) {
+                scope.$env.put(node.params[i].name, node.params[i]);
+            }
+            node.$env.put("arguments", node);
+            break;
+        case 'VariableDeclarator':
+            scope.$env.put(node.id.name, node.id);
+            break;
+        case 'CatchClause':
+            node.$env = new TypeMap;
+            node.$env.put(node.id.name, node.id);
+            break;
+    }
+    var list = children(node);
+    for (var i=0; i<list.length; i++) {
+        buildEnvs(list[i], scope);
+    }
+}
 
 // Types and Union-Find
 // --------------------
@@ -898,7 +930,7 @@ function computeLabelRenaming(node) {
 }
 
 // To rename variables, we find its declaration and search its scope for references.
-// We choose to ignore with statements because their used is frowned upon and seldom seen in practice.
+// We choose to ignore with statements because their use is frowned upon and seldom seen in practice.
 function getVarDeclScope(node) {
     var name = node.name;
     while (node) {
