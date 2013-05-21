@@ -1,14 +1,85 @@
 // Unification-Based Type Inference for JavaScript
 // ===============================================
- 
-// We use Esprima's AST definition (which itself is based on Mozilla's API) but with the following additions:
+
+
+// Ast Manipulation
+// ----------------
+// To simplify our work with ASTs, we define the following utility functions.
+// First, to enable generic AST traversal, we define a function to get the list of
+// children of an AST node.
+// We use the convention that any property starting with `$` should not be considered a child node.
+function children(node) {
+    var result = [];
+    for (var k in node) {
+        if (!node.hasOwnProperty(k))
+            continue;
+        if (k[0] === '$')
+            continue;
+        var val = node[k];
+        if (!val)
+            continue;
+        if (typeof val === "object" && typeof val.type === "string") {
+            result.push(val);
+        }
+        else if (val instanceof Array) {
+            for (var i=0; i<val.length; i++) {
+                var elm = val[i];
+                if (typeof elm === "object" && typeof elm.type === "string") {
+                    result.push(elm);
+                }
+            }
+        } 
+    }
+    return result;
+}
+
+// We inject parent pointers into every node. Pointer pointers let refer directly to AST nodes
+// without needing to piggy-back a lot of contextual information.
+// I once did the refactoring logic without parent pointers, and it wasn't pretty. Parent pointers are good.
+function injectParentPointers(node, parent) {
+    node.$parent = parent;
+    var list = children(node);
+    for (var i=0; i<list.length; i++) {
+        injectParentPointers(list[i], node);
+    }
+}
+
+function getEnclosingFunction(node) {
+    while  (node.type !== 'FunctionDeclaration' && 
+            node.type !== 'FunctionExpression' && 
+            node.type !== 'Program') {
+        node = node.$parent;
+    }
+    return node;
+}
+
+// `findNodeAt` finds an AST node from an absolute source file position. More precisely, it finds the
+// deepest nested node whose range contains the given position. It lets us find the identifier token
+// under the user's curser when the refactoring is initiated.
+function inRange(range, x) {
+    return range[0] <= x && x <= range[1];
+}
+function findNodeAt(node, offset) {
+    if (!inRange(node.range, offset))
+        return null;
+    var list = children(node);
+    for (var i=0; i<list.length; i++) {
+        var r = findNodeAt(list[i], offset);
+        if (r !== null)
+            return r;
+    }
+    return node;
+}
+
+// We extend Esprima's AST definition with a new type of node: `ProgramCollection`, and we add the `file`
+// field to the Program node as well. The following should be seen as an extension to the 
+// [Mozilla Parser API](https://developer.mozilla.org/en-US/docs/SpiderMonkey/Parser_API):
 //
-// - There is a new type of node called `ProgramCollection`:
 //       interface ProgramCollection {
 //           programs : [Program | ProgramCollection]
 //           file : String | null
 //       }
-// - The `Program` node may have a `file` attribute:
+//
 //       interface Program {
 //          ...
 //          file : String | null
@@ -17,6 +88,19 @@
 // Any Program that does not have a `file` should be placed inside a `ProgramCollection` that has a file.
 // This design allows code bases with many files to be represented in a unified AST.
 // Two nodes should not have the same `file`. 
+function findAstForFile(node, file) {
+    if (node.file === file)
+        return node;
+    if (node.type === 'ProgramCollection') {
+        for (var i=0; i<node.programs.length; i++) {
+            var r = findAstForFile(node.programs[i], file);
+            if (r !== null)
+                return r;
+        }
+    }
+    return null;
+}
+
 
 // Types and Union-Find
 // --------------------
@@ -32,12 +116,15 @@ function TypeNode() {
     this.prty = new TypeMap;
     this.namespace = false;
 }
+/** Returns root node, and performs path compression */
 TypeNode.prototype.rep = function() {
     if (this.parent != this) {
         this.parent = this.parent.rep();
     }
     return this.parent;
 };
+/** Returns type of the given property; creating it if necessary.
+    Result will be a root node. */
 TypeNode.prototype.getPrty = function(name) {
     if (typeof name !== "string")
         throw "Not a string: " + name;
@@ -47,7 +134,7 @@ TypeNode.prototype.getPrty = function(name) {
         t = new TypeNode;
         map.put(name, t);
     }
-    return t;
+    return t.rep();
 }
 
 // A `TypeMap` maps strings to type nodes. It is used to store the property types of
@@ -131,6 +218,7 @@ TypeUnifier.prototype.complete = function() {
 // --------------
 // The type inference procedure initially assumes all expressions have distinct
 // types, and then unifies types based on a single traversal of the AST.
+// There are a couple of utility functions we must establish before we do the traversal, though.
 function inferTypes(asts) {
     var unifier = new TypeUnifier;
 
@@ -261,9 +349,9 @@ function inferTypes(asts) {
     }
 
     // To properly infer the receiver type of methods, we need a way to distinguish methods
-    // from constructors in namespaces. These methods are called during the first traversal
+    // from constructors in namespaces. The following functions are called during the first traversal
     // to indicate potential methods, and what objects appear to be used as namespaces.
-    var potentialMethods = [];
+    var potentialMethods = []; // interleaved (base,receiver) pairs
     function addPotentialMethod(base, receiver) {
         potentialMethods.push(getType(base));
         potentialMethods.push(getType(receiver));
@@ -279,13 +367,13 @@ function inferTypes(asts) {
     }
 
     // We use these constants to avoid confusing boolean constants
-    var Primitive = true;
+    var Primitive = true; // returned to indicate expression was a primitive
     var NotPrimitive = false;
 
-    var Void = true;
+    var Void = true; // argument to indicate expression occurs in void context
     var NotVoid = false;
 
-    var Expr = true;
+    var Expr = true; // argument to visitFunction to indicate it is an expression
     var NotExpr = false;
 
     // The AST traversal consists of three mutually recursive functions:
@@ -614,6 +702,7 @@ function inferTypes(asts) {
 // ------------
 // Type schemas are a way to showing types for human inspection and for exporting to other systems.
 // This converts a type node to a type schema. For far, recursion is controlled in a fairly mundane manner.
+// These functions are pretty much stubs in place for a real implementation.
 function typeSchema(type, names) {
     type = type.rep();
     names = names || {};
@@ -629,28 +718,6 @@ function typeSchema(type, names) {
     return schema;
 }
 
-function children(node) {
-    var result = [];
-    for (var k in node) {
-        if (!node.hasOwnProperty(k))
-            continue;
-        var val = node[k];
-        if (!val)
-            continue;
-        if (typeof val === "object" && typeof val.type === "string") {
-            result.push(val);
-        }
-        else if (val instanceof Array) {
-            for (var i=0; i<val.length; i++) {
-                var elm = val[i];
-                if (typeof elm === "object" && typeof elm.type === "string") {
-                    result.push(elm);
-                }
-            }
-        } 
-    }
-    return result;
-}
 function printTypes(ast) {
     function visit(node) {
         switch (node.type) {
@@ -665,72 +732,79 @@ function printTypes(ast) {
     visit(ast);
 }
 
+
+
+// Renaming Identifiers
+// --------------------
+// `classifyId` classifies an identifier token as a property, variable, or label.
+// Property identifiers additionally have a *base* expression, denoting the object on
+// which the property is accessed. Variables may be global or local.
+function classifyId(idNode) {
+    if (!idNode.hasOwnProperty("$parent"))
+        throw new Error("classifyId requires parent pointers");
+    var parent = idNode.$parent;
+    switch (parent.type) {
+        case 'MemberExpression':
+            if (!parent.computed && parent.property === idNode) {
+                return {type:"property", base:parent.object};
+            }
+            break;
+        case 'Property':
+            if (parent.key === idNode) {
+                return {type:"property", base:parent.$parent};
+            }
+            break;
+        case 'BreakStatement':
+        case 'ContinueStatement':
+            if (parent.label === idNode) {
+                return {type:"label"};
+            }
+            break;
+        case 'LabeledStatement':
+            if (parent.label === idNode) {
+                return {type:"label"};
+            }
+            break;
+    }
+    return {type:"variable"};
+}
+
+// To rename an identifier given some position, we find the identifier token, classify it, and then dispatch
+// to the proper renaming function (defined below).
 /**
- * Denotes a position in a file.
- * - `file` is a string uniquely identifying the file in question
- * - `position` is the absolute index in the source code of the given file
- * 
- * The `file` field need not be a valid path in any file system; it may be any string.
+ * The `asts` argument can be a `Program` or a `ProgramCollection` satisfying the following:
+ * - Must be parsed with Esprima option `ranges:true`
+ * - Must have types inferred using `inferTypes`
+ * - All `Program` nodes must have a `file` field, and one of those must hold a value equal to `targetLoc.file`.
  */
-function Location(file, position) {
-    this.file = file;
-    this.position = position;
-}
-function Range(file, start, end) {
-    this.file = file;
-    this.start = start;
-    this.end = end;
-}
-
-function Access(base, id) {
-    this.base = base;
-    this.id = id;
-}
-
-function inRange(range, x) {
-    return range[0] <= x && x <= range[1];
-}
-function findAccess(node, offset) {
-    if (!inRange(node.range, offset))
+function computeRenaming(ast, targetLoc) {
+    var targetAst = findAstForFile(ast);
+    if (targetAst === null) {
+        throw new Error("Could not find AST for file " + targetLoc.file);
+    }
+    var targetId = findNodeAt(ast, targetLoc.offset);
+    if (targetId === null || targetId.type !== 'Identifier')
         return null;
-    if (node.type === "MemberExpression" && !node.computed && inRange(node.property.range, offset)) {
-        return {type:"property", base:node.object, id:node.property};// new Access(node.object, node.property);
-    } else if (node.type === "ObjectExpression") {
-        for (var i=0; i<node.properties.length; i++) {
-            var prty = node.properties[i];
-            if (inRange(prty.id, offset)) {
-                return {type:"property", base:node, id:node.property};// new Access(node, node.property);
-            }
-        }
-    } else if (node.type === "LabeledStatement" && inRange(node.label.range, offset)) {
-        return {type:"label", decl:node, id:node.label};
-    } else if ((node.type === "BreakStatement" || node.type === "ContinueStatement") && node.label && inRange(node.label.range, offset)) {
-        return {type:"label", decl:null, id:node.label};
-    } else if (node.type === "Identifier") {
-        return {type:"global", id:node};
+    var idClass = classifyId(targetId);
+    var groups;
+    switch (idClass.type) {
+        case 'variable':
+            break;
+        case 'label':
+            break;
+        case 'property':
+            var targetName = targetId.name;
+            groups = computeRenamingGroupsForName(targetName);
+            reorderGroupsStartingAt(groups, targetLoc);
+            break;
+        default: throw new Error("unknown id class: " + idClass.type);
     }
-    // access not found here, recurse on children
-    var ch = children(node);
-    for (var i=0; i<ch.length; i++) {
-        var acc = findAccess(ch[i]);
-        if (ac !== null) {
-            if (ac.type === "global" && (node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "CatchClause")) {
-                if (node.env_type.has(node.id.name)) {
-                    ac.type = "local";
-                    ac.scope = node;
-                }
-            }
-            else if (ac.type == "label" && (node.type === "LabeledStatement")) {
-                if (node.decl === null && node.label.name === ac.id.name) {
-                    ac.decl = node;
-                }
-            }
-            return ac;
-        }
-    }
-    return null;
+    return groups;
 }
 
+// `computeRenamingGroupsForName` computes the groups for a given property name. The token
+// selected by the user is not an input, because the concrete token chosen does not influence
+// the choice of renaming groups.
 function computeRenamingGroupsForName(ast, name) {
     var currentFile = null;
     var group2members = {};
@@ -779,37 +853,101 @@ function computeRenamingGroupsForName(ast, name) {
 }
 
 function reorderGroupsStartingAt(groups, targetLoc) {
-    // TODO
+    /* TODO */
 }
 
-/**
- * Computes a Range[][] object such that each Range[] in the topmost array should be renamed together.
- * The `asts` argument can be a `Program` or a `ProgramCollection` satisfying the following:
- * - Must be parsed with Esprima option `ranges:true`
- * - Must have types inferred using `inferTypes`
- * - All `Program` nodes must have a `file` field, and one of those must hold a value equal to `targetLoc.file`.
- */
-function computeRenaming(ast, targetLoc) {
-    var targetAst = null;
-    if (ast.type === "Program" && ast.file === targetLoc.file) {
-        targetAst = ast;
-    } else if (ast.type === "ProgramCollection") {
-        for (var i=0; i<ast.programs.length; i++) {
-            if (ast.programs[i].file === targetLoc.file) {
-                targetAst = ast.programs[i];
+// To rename labels, we find its declaration (if any) and then search its scope for possible references.
+// Resolving labels is decidable, so we only ever get one group here.
+function getLabelDecl(node) {
+    var name = node.name;
+    while (node && node.type !== 'LabeledStatement' && node.label.name !== name) {
+        node = node.$parent;
+    }
+    return node || null;
+}
+function computeLabelRenaming(node) {
+    var name = node.label.name;
+    var decl = getLabelDecl(node);
+    var result;
+    function visit(node) {
+        switch (node.type) {
+            case 'LabeledStatement':
+                if (node.label.name === name)
+                    return; // shadowed label
                 break;
-            }
+            case 'FunctionDeclaration':
+            case 'FunctionExpression':
+                return; // labels don't propagte inside functions
+            case 'BreakStatement':
+            case 'ContinueStatement':
+                if (node.label !== null && node.label.name === name)
+                    result.add(node.label);
+                break;
+        }
+        children(node).forEach(visit);
+    }
+    var search;
+    if (decl === null) { // gracefully handle error case where label was undeclared
+        result = [];
+        search = getEnclosingFunction(node);
+    } else {
+        result = [decl.label];
+        search = decl.body;
+    }
+    visit(search);
+}
+
+// To rename variables, we find its declaration and search its scope for references.
+// We choose to ignore with statements because their used is frowned upon and seldom seen in practice.
+function getVarDeclScope(node) {
+    var name = node.name;
+    while (node) {
+        switch (node.type) {
+            case 'Program':
+                return node;
+            case 'FunctionDeclaration':
+            case 'FunctionExpression':
+            case 'CatchClause':
+                if (node.env_type.has(name))
+                    return node;
+                break;
+        }
+        node = node.$parent;
+    }
+}
+
+function computeVariableRenaming(node) {
+    var scope = getVarDeclScope(node);
+    if (scope.type === 'Program') {
+        /* global variable */
+        return computeGlobalVariableRenaming(node.name);
+    } else {
+        /* local variable */
+        return computeLocalVariableRenaming(scope, name);
+    }
+}
+
+function computeGlobalVaribaleRenaming(name) {
+
+}
+function computeLocalVariableRenaming(scope, name) {
+    var ids = [];
+    function visit(node) {
+        switch (node.type) {
+            case 'Identifier':
+                if (node.name === name && classifyId(node).type === 'variable') {
+                    ids.push(node);
+                }
+                break;
+            case 'FunctionDeclaration':
+            case 'FunctionExpression':
+                break;
+            case 'CatchClause':
+                break;
         }
     }
-    if (targetAst === null) {
-        throw new Error("Could not find AST for file " + targetLoc.file);
-    }
-    var targetAccess = findAccess(targetAst, targetLoc.offset);
-    var targetName = targetAccess.id.name;
-    var groups = computeRenamingGroupsForName(targetName);
-    reorderGroupsStartingAt(groups, targetLoc);
-    return groups;
 }
+
 
 if (require.main === module) {
     var es = require('../lib/esprima'), fs = require('fs');
