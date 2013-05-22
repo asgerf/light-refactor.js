@@ -752,40 +752,6 @@ function inferTypes(asts) {
     asts.global = global; // expose global object type
 } /* end of inferTypes */
 
-// Type Schemas
-// ------------
-// Type schemas are a way to showing types for human inspection and for exporting to other systems.
-// This converts a type node to a type schema. For far, recursion is controlled in a fairly mundane manner.
-// These functions are pretty much stubs in place for a real implementation.
-function typeSchema(type, names) {
-    type = type.rep();
-    names = names || {};
-    if (names[type.id]) {
-        return names[type.id];
-    }
-    var schema = {};
-    names[type.id] = "recursive[" + type.id + "]";
-    type.prty.forEach(function (key,val) {
-        schema[key] = typeSchema(val, names);
-    });
-    delete names[type.id];
-    return schema;
-}
-
-function printTypes(ast) {
-    function visit(node) {
-        switch (node.type) {
-            case "VariableDeclarator":
-                var type = node.id.type_node.rep();
-                var schema = typeSchema(type);
-                console.log(node.id.name + " " + JSON.stringify(schema));
-                break;
-        }
-        children(node).forEach(visit);
-    }
-    visit(ast);
-}
-
 // Renaming Identifiers
 // --------------------
 // `classifyId` classifies an identifier token as a property, variable, or label.
