@@ -102,7 +102,7 @@ function buildEnvs(node, scope) {
             break;
         case 'CatchClause':
             node.$env = new Map;
-            node.$env.put(node.id.name, node.id);
+            node.$env.put(node.param.name, node.id);
             break;
     }
     var list = children(node);
