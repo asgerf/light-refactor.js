@@ -300,66 +300,6 @@ function inferTypes(asts) {
         }
     }
 
-    /** Scans a function body for variable declarations and adds them to the current environment */
-    function scanVars(node) {
-        if (node === null)
-            return;
-        if (typeof node === "undefined")
-            throw "Missing node in scanVars";
-        switch (node.type) {
-            case "BlockStatement":
-                node.body.forEach(scanVars);
-                break;
-            case "IfStatement":
-                scanVars(node.consequent);
-                scanVars(node.alternate);
-                break;
-            case "LabeledStatement":
-                scanVars(node.body);
-                break;
-            case "WithStatement":
-                scanVars(node.body);
-                break;
-            case "SwitchStatement":
-                node.cases.forEach(scanVars);
-                break;
-            case "SwitchCase":
-                scanVars(node.consequent);
-                break;
-            case "TryStatement":
-                scanVars(node.block);
-                scanVars(node.handler);
-                node.guardedHandlers.forEach(scanVars);
-                break;
-            case "CatchClause":
-                scanVars(node.body);
-                break;
-            case "WhileStatement":
-                scanVars(node.body);
-                break;
-            case "DoWhileStatement":
-                scanVars(node.body);
-                break;
-            case "ForStatement":
-                scanVars(node.init);
-                scanVars(node.body);
-                break;
-            case "ForInStatement":
-                scanVars(node.left);
-                scanVars(node.body);
-                break;
-            case "VariableDeclaration":
-                node.declarations.forEach(scanVars);
-                break;
-            case "VariableDeclarator":
-                addVarToEnv(node.id.name);
-                break;
-            case "FunctionDeclaration":
-                addVarToEnv(node.id.name);
-                break;
-        }
-    }
-
     // We create type nodes on-demand and inject them into the AST using `getType` and `getEnv`.
     /* Type of the given expression. For convenience acts as identity on type nodes */
     function getType(node) {
@@ -440,7 +380,9 @@ function inferTypes(asts) {
             addVarToEnv(fun.params[i].name); // add params to env
             fun.params[i].type_node = env.get(fun.params[i].name);
         }
-        scanVars(fun.body); // add var decls to env
+        fun.$env.forEach(function (key,val) {
+            addVarToEnv(key);
+        });
         if (expr && fun.id !== null) {
             addVarToEnv(fun.id.name); // add self-reference to environment
             unify(fun, env.get(fun.id.name));
