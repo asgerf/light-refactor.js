@@ -700,33 +700,42 @@ function inferTypes(asts) {
 // Property identifiers additionally have a *base* expression, denoting the object on
 // which the property is accessed. Variables may be global or local.
 function classifyId(node) {
-    if (!node.hasOwnProperty("$parent"))
-        throw new Error("classifyId requires parent pointers");
+    if (node.type != 'Identifier' && (node.type !== 'Literal' || typeof node.value !== 'string'))
+        return null; // only identifiers and string literals can be IDs
     var parent = node.$parent;
     switch (parent.type) {
         case 'MemberExpression':
-            if (!parent.computed && parent.property === node) {
-                return {type:"property", base:parent.object};
+            if (!parent.computed && parent.property === node && node.type === 'Identifier') {
+                return {type:"property", base:parent.object, name:node.name};
+            } else if (parent.computed && parent.property === node && node.type === 'Literal') {
+                return {type:"property", base:parent.object, name:node.value};
             }
             break;
         case 'Property':
             if (parent.key === node) {
-                return {type:"property", base:parent.$parent};
+                if (node.type === 'Identifier') {
+                    return {type:"property", base:parent.$parent, name:node.name};
+                } else if (node.type === 'Literal') {
+                    return {type:"property", base:parent.$parent, name:node.value};
+                }
             }
             break;
         case 'BreakStatement':
         case 'ContinueStatement':
             if (parent.label === node) {
-                return {type:"label"};
+                return {type:"label", name:node.name};
             }
             break;
         case 'LabeledStatement':
             if (parent.label === node) {
-                return {type:"label"};
+                return {type:"label", name:node.name};
             }
             break;
     }
-    return {type:"variable"};
+    if (node.type === 'Identifier')
+        return {type:"variable", name:node.name};
+    else
+        return null;
 }
 
 // To rename an identifier given some position, we find the identifier token, classify it, and then dispatch
@@ -737,9 +746,11 @@ function computeRenaming(ast, file, offset) {
         throw new Error("Could not find AST for file " + file);
     }
     var targetId = findNodeAt(ast, offset);
-    if (targetId === null || targetId.type !== 'Identifier')
+    if (targetId === null)
         return null;
     var idClass = classifyId(targetId);
+    if (idClass === null)
+        return null;
     var groups;
     switch (idClass.type) {
         case 'variable':
@@ -777,11 +788,9 @@ function computePropertyRenaming(ast, name) {
         group2members[key].push(id);
     }
     function visit(node) {
-        if (node.type === 'Identifier' && node.name === name) {
-            var clazz = classifyId(node);
-            if (clazz.type === 'property') {
-                add(clazz.base, node);
-            }   
+        var clazz = classifyId(node);
+        if (clazz != null && clazz.type === 'property' && clazz.name === name) {
+            add(clazz.base, node);
         }
         children(node).forEach(visit);
     }
@@ -849,8 +858,9 @@ function computeGlobalVariableRenaming(ast, name) {
     function visit(node, shadowed) {
         switch (node.type) {
             case 'Identifier':
-                if (node.name === name) {
-                    var clazz = classifyId(node);
+            case 'Literal':
+                var clazz = classifyId(node);
+                if (clazz != null && clazz.name === name) {
                     if (clazz.type === 'variable' && !shadowed) {
                         ids.push(node);
                     } else if (clazz.type === 'property' && clazz.base.type_node.rep() === global) {
@@ -950,9 +960,9 @@ JavaScriptBuffer.prototype.classify = function(file, offset) {
     var node = findNodeAt(ast, offset);
     if (node === null)
         return null;
-    if (node.type !== 'Identifier')
-        return null;
     var clazz = classifyId(node);
+    if (clazz === null)
+        return null;
     switch (clazz.type) {
         case "variable": return getVarDeclScope(node).type === 'Program' ? "global" : "local";
         case "property": return "property";
@@ -982,7 +992,7 @@ if (require && require.main === module) {
     var buffer = new JavaScriptBuffer;
     buffer.add(filename, text);
     inferTypes(buffer.asts);
-    var groups = computePropertyRenaming(buffer.asts, "add");
+    var groups = computePropertyRenaming(buffer.asts, process.argv[3] || "add");
     groups.forEach(function(group) {
         var texts = group.map(function(node) {return text.substring(node.range[0], node.range[1]);});
         console.log(texts.join(", "));
