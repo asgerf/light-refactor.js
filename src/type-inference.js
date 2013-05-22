@@ -784,7 +784,7 @@ function computeRenaming(ast, file, offset) {
 // the choice of renaming groups.
 function computePropertyRenaming(ast, name) {
     var group2members = {};
-    var global = ast.global.type_node.rep().id;
+    var global = ast.global.rep().id;
     function add(base, id) {
         var key = base.type_node.rep().id;
         if (key === global)
@@ -937,7 +937,7 @@ function JavaScriptBuffer() {
 /**  Adds a file to this buffer. 
      `file` can be any string unique to this file, typically derived from the file name. */
 JavaScriptBuffer.prototype.add = function(file, source_code) {
-    var ast = esprima.parse(source_code, {range:true, tolerant:true});
+    var ast = esprima.parse(source_code, {range:true, tolerant:true, loc:true});
     this.addAST(file, ast);
 };
 
@@ -1000,7 +1000,16 @@ if (require && require.main === module) {
     inferTypes(buffer.asts);
     var groups = computePropertyRenaming(buffer.asts, process.argv[3] || "add");
     groups.forEach(function(group) {
-        var texts = group.map(function(node) {return text.substring(node.range[0], node.range[1]);});
+        function preview(node) {
+            if (node.$parent.type === 'Property') {
+                return '{' + text.substring(node.range[0], node.range[1]) + '}';
+            } else if (node.$parent.loc.start.line != node.$parent.loc.end.line) {
+                return "(..)." + classifyId(node).name;
+            } else {
+                return text.substring(node.$parent.range[0], node.$parent.range[1]);
+            }
+        }
+        var texts = group.map(function(node) {return node.loc.start.line + ":" + node.loc.start.column + " " + preview(node);});
         console.log(texts.join(", "));
     });
 }
