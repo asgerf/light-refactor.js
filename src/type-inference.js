@@ -992,24 +992,39 @@ JavaScriptBuffer.prototype.clear = function() {
 // -----------------------------------------------
 // A simple entry point for testing purposes
 if (require && require.main === module) {
-    var es = require('../lib/esprima'), fs = require('fs');
+    var fs = require('fs'),
+        clc = require('cli-color');
     var filename = process.argv[2];
     var text = fs.readFileSync(filename, {encoding:"utf8"});
+    var lines = text.split(/\r?\n|\r/);
     var buffer = new JavaScriptBuffer;
     buffer.add(filename, text);
     inferTypes(buffer.asts);
     var groups = computePropertyRenaming(buffer.asts, process.argv[3] || "add");
     groups.forEach(function(group) {
-        function preview(node) {
-            if (node.$parent.type === 'Property') {
-                return '{' + text.substring(node.range[0], node.range[1]) + '}';
-            } else if (node.$parent.loc.start.line != node.$parent.loc.end.line) {
-                return "(..)." + classifyId(node).name;
-            } else {
-                return text.substring(node.$parent.range[0], node.$parent.range[1]);
-            }
-        }
-        var texts = group.map(function(node) {return node.loc.start.line + ":" + node.loc.start.column + " " + preview(node);});
-        console.log(texts.join(", "));
+        console.log(clc.green("---------------- (" + group.length + ")"));
+        group.forEach(function (item,index) {
+            if (index > 0) console.log(clc.blackBright("--"));
+            var idx = item.loc.start.line - 1;
+            var line = lines[idx];
+            line = clc.black(line.substring(0,item.loc.start.column)) + 
+                   clc.red(line.substring(item.loc.start.column, item.loc.end.column)) +
+                   clc.black(line.substring(item.loc.end.column));
+            console.log(clc.black(lines[idx-1]) || '');
+            console.log(line);
+            console.log(clc.black(lines[idx+1]) || '');
+        });
+        // function preview(node) {
+        //     if (node.$parent.type === 'Property') {
+        //         return '{' + text.substring(node.range[0], node.range[1]) + '}';
+        //     } else if (node.$parent.loc.start.line != node.$parent.loc.end.line) {
+        //         return "(..)." + classifyId(node).name;
+        //     } else {
+        //         return text.substring(node.$parent.range[0], node.$parent.range[1]);
+        //     }
+        // }
+        // var texts = group.map(function(node) {return node.loc.start.line + ":" + node.loc.start.column + " " + preview(node);});
+        // console.log(texts.join(", "));
     });
+    console.log(clc.green("----------------"));
 }
