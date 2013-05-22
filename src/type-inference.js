@@ -777,7 +777,7 @@ function computePropertyRenaming(ast, name) {
         group2members[key].push(id);
     }
     function visit(node) {
-        if (node.type === 'Identifier') {
+        if (node.type === 'Identifier' && node.name === name) {
             var clazz = classifyId(node);
             if (clazz.type === 'property') {
                 add(clazz.base, node);
