@@ -912,6 +912,8 @@ function computeLocalVariableRenaming(scope, name) {
 // -----------------------------------------------
 // `JavaScriptBuffer` provides an AST-agnostic interface that deals with abstract file names
 // and source code offsets instead of node pointers.
+var esprima = require('esprima');
+
 function JavaScriptBuffer() {
     this.asts = {type:'ProgramCollection', programs:[]};
 }
@@ -919,7 +921,7 @@ function JavaScriptBuffer() {
 /**  Adds a file to this buffer. 
      `file` can be any string unique to this file, typically derived from the file name. */
 JavaScriptBuffer.prototype.add = function(file, source_code) {
-    var ast = esprima.parse(source_code, {ranges:true});
+    var ast = esprima.parse(source_code, {range:true, tolerant:true});
     this.addAST(file, ast);
 };
 
@@ -975,12 +977,14 @@ JavaScriptBuffer.prototype.clear = function() {
 // A simple entry point for testing purposes
 if (require && require.main === module) {
     var es = require('../lib/esprima'), fs = require('fs');
-    var text = fs.readFileSync(process.argv[2], {encoding:"utf8"});
-    var ast = es.parse(text, {range:true});
-    inferTypes(ast);
-    var groups = computeRenamingGroupsForName(ast, "add");
+    var filename = process.argv[2];
+    var text = fs.readFileSync(filename, {encoding:"utf8"});
+    var buffer = new JavaScriptBuffer;
+    buffer.add(filename, text);
+    inferTypes(buffer.asts);
+    var groups = computePropertyRenaming(buffer.asts, "add");
     groups.forEach(function(group) {
-        var texts = group.map(function(range) {return text.substring(range.start, range.end);});
+        var texts = group.map(function(node) {return text.substring(node.range[0], node.range[1]);});
         console.log(texts.join(", "));
     });
 }
