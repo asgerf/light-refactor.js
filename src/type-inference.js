@@ -745,10 +745,10 @@ function computeRenaming(ast, file, offset) {
     if (targetAst === null) {
         throw new Error("Could not find AST for file " + file);
     }
-    var targetId = findNodeAt(ast, offset);
-    if (targetId === null)
+    var node = findNodeAt(ast, offset);
+    if (node === null)
         return null;
-    var idClass = classifyId(targetId);
+    var idClass = classifyId(node);
     if (idClass === null)
         return null;
     var groups;
@@ -756,6 +756,7 @@ function computeRenaming(ast, file, offset) {
         case 'variable':
             var scope = getVarDeclScope(node);
             if (scope.type === 'Program') {
+                inferTypes(ast);
                 groups = computeGlobalVariableRenaming(ast, node.name);
             } else {
                 groups = computeLocalVariableRenaming(scope, name);
@@ -765,9 +766,13 @@ function computeRenaming(ast, file, offset) {
             groups = computeLabelRenaming(node);
             break;
         case 'property':
-            var targetName = targetId.name;
-            groups = computePropertyRenaming(ast, targetName);
-            reorderGroupsStartingAt(groups, file, offset);
+            inferTypes(ast);
+            if (node.base.type_node.rep() === ast.global.rep()) {
+                groups = computeGlobalVariableRenaming(ast, node.name);
+            } else {
+                groups = computePropertyRenaming(ast, node.name);
+                reorderGroupsStartingAt(groups, file, offset);
+            }
             break;
         default: throw new Error("unknown id class: " + idClass.type);
     }
@@ -778,10 +783,12 @@ function computeRenaming(ast, file, offset) {
 // selected by the user is not an input, because the concrete token chosen does not influence
 // the choice of renaming groups.
 function computePropertyRenaming(ast, name) {
-    inferTypes(ast);
     var group2members = {};
+    var global = ast.global.type_node.rep().id;
     function add(base, id) {
         var key = base.type_node.rep().id;
+        if (key === global)
+            return; // global variables are kept separate
         if (!group2members[key]) {
             group2members[key] = [];
         }
@@ -852,7 +859,6 @@ function computeLabelRenaming(node) {
 // the global object (i.e. `window.foo`). 
 // Somewhat optimistically, we assume that the user wants to rename the both types of references.
 function computeGlobalVariableRenaming(ast, name) {
-    inferTypes(ast);
     var ids = [];
     var global = ast.global.rep();
     function visit(node, shadowed) {
