@@ -78,7 +78,6 @@ function getEnclosingFunction(node) {
     return node;
 }
 
-
 // We annotate each scope with the set of variables they declare.
 function buildEnvs(node, scope) {
     if (node.type === 'Program') {
@@ -110,6 +109,24 @@ function buildEnvs(node, scope) {
     for (var i=0; i<list.length; i++) {
         buildEnvs(list[i], scope);
     }
+}
+
+function getVarDeclScope(node) {
+    var name = node.name;
+    while (node) {
+        switch (node.type) {
+            case 'Program':
+                return node;
+            case 'FunctionDeclaration':
+            case 'FunctionExpression':
+            case 'CatchClause':
+                if (node.$env.has(name))
+                    return node;
+                break;
+        }
+        node = node.$parent;
+    }
+    return null;
 }
 
 
@@ -731,6 +748,8 @@ function inferTypes(asts) {
         }
     }
     unifier.complete();
+
+    asts.global = global; // expose global object type
 } /* end of inferTypes */
 
 // Type Schemas
@@ -767,36 +786,34 @@ function printTypes(ast) {
     visit(ast);
 }
 
-
-
 // Renaming Identifiers
 // --------------------
 // `classifyId` classifies an identifier token as a property, variable, or label.
 // Property identifiers additionally have a *base* expression, denoting the object on
 // which the property is accessed. Variables may be global or local.
-function classifyId(idNode) {
-    if (!idNode.hasOwnProperty("$parent"))
+function classifyId(node) {
+    if (!node.hasOwnProperty("$parent"))
         throw new Error("classifyId requires parent pointers");
-    var parent = idNode.$parent;
+    var parent = node.$parent;
     switch (parent.type) {
         case 'MemberExpression':
-            if (!parent.computed && parent.property === idNode) {
+            if (!parent.computed && parent.property === node) {
                 return {type:"property", base:parent.object};
             }
             break;
         case 'Property':
-            if (parent.key === idNode) {
+            if (parent.key === node) {
                 return {type:"property", base:parent.$parent};
             }
             break;
         case 'BreakStatement':
         case 'ContinueStatement':
-            if (parent.label === idNode) {
+            if (parent.label === node) {
                 return {type:"label"};
             }
             break;
         case 'LabeledStatement':
-            if (parent.label === idNode) {
+            if (parent.label === node) {
                 return {type:"label"};
             }
             break;
@@ -806,31 +823,32 @@ function classifyId(idNode) {
 
 // To rename an identifier given some position, we find the identifier token, classify it, and then dispatch
 // to the proper renaming function (defined below).
-/**
- * The `asts` argument can be a `Program` or a `ProgramCollection` satisfying the following:
- * - Must be parsed with Esprima option `ranges:true`
- * - Must have types inferred using `inferTypes`
- * - All `Program` nodes must have a `file` field, and one of those must hold a value equal to `targetLoc.file`.
- */
-function computeRenaming(ast, targetLoc) {
+function computeRenaming(ast, file, offset) {
     var targetAst = findAstForFile(ast);
     if (targetAst === null) {
-        throw new Error("Could not find AST for file " + targetLoc.file);
+        throw new Error("Could not find AST for file " + file);
     }
-    var targetId = findNodeAt(ast, targetLoc.offset);
+    var targetId = findNodeAt(ast, offset);
     if (targetId === null || targetId.type !== 'Identifier')
         return null;
     var idClass = classifyId(targetId);
     var groups;
     switch (idClass.type) {
         case 'variable':
+            var scope = getVarDeclScope(node);
+            if (scope.type === 'Program') {
+                groups = computeGlobalVariableRenaming(ast, node.name);
+            } else {
+                groups = computeLocalVariableRenaming(scope, name);
+            }
             break;
         case 'label':
+            groups = computeLabelRenaming(node);
             break;
         case 'property':
             var targetName = targetId.name;
-            groups = computeRenamingGroupsForName(targetName);
-            reorderGroupsStartingAt(groups, targetLoc);
+            groups = computePropertyRenaming(ast, targetName);
+            reorderGroupsStartingAt(groups, file, offset);
             break;
         default: throw new Error("unknown id class: " + idClass.type);
     }
@@ -840,42 +858,24 @@ function computeRenaming(ast, targetLoc) {
 // `computeRenamingGroupsForName` computes the groups for a given property name. The token
 // selected by the user is not an input, because the concrete token chosen does not influence
 // the choice of renaming groups.
-function computeRenamingGroupsForName(ast, name) {
-    var currentFile = null;
+function computePropertyRenaming(ast, name) {
+    inferTypes(ast);
     var group2members = {};
     function add(base, id) {
         var key = base.type_node.rep().id;
         if (!group2members[key]) {
             group2members[key] = [];
         }
-        var range;
-        if (id.type === 'Identifier') {
-            range = new Range(currentFile, id.range[0], id.range[1]);
-        } else if (id.type === 'Literal' && typeof id.value === 'string') {
-            range = new Range(currentFile, id.range[0]+1, id.range[1]-1); // skip quotes on string literal
-        } else {
-            return; // ignore integer literals
-        }
-        group2members[key].push(range);
+        group2members[key].push(id);
     }
     function visit(node) {
-        if (node.type === 'MemberExpression' && !node.computed && node.property.name === name) {
-            add(node.object, node.property);
-        } else if (node.type === 'ObjectExpression') {
-            for (var i=0; i<node.properties.length; i++) {
-                var prty = node.properties[i];
-                if (prty.id.name === name) {
-                    add(node, prty.id);
-                }
-            }
-        }
-        if (node.type === 'Program') {
-            currentFile = node.file;
+        if (node.type === 'Identifier') {
+            var clazz = classifyId(node);
+            if (clazz.type === 'property') {
+                add(clazz.base, node);
+            }   
         }
         children(node).forEach(visit);
-        if (node.type === 'Program') {
-            currentFile = null;
-        }
     }
     visit(ast);
     var groups = [];
@@ -887,12 +887,11 @@ function computeRenamingGroupsForName(ast, name) {
     return groups;
 }
 
-function reorderGroupsStartingAt(groups, targetLoc) {
+function reorderGroupsStartingAt(groups, file, offset) {
     /* TODO */
 }
 
 // To rename labels, we find its declaration (if any) and then search its scope for possible references.
-// Resolving labels is decidable, so we only ever get one group here.
 function getLabelDecl(node) {
     var name = node.name;
     while (node && node.type !== 'LabeledStatement' && node.label.name !== name) {
@@ -932,39 +931,49 @@ function computeLabelRenaming(node) {
     visit(search);
 }
 
-// To rename variables, we find its declaration and search its scope for references.
-// We choose to ignore with statements because their use is frowned upon and seldom seen in practice.
-function getVarDeclScope(node) {
-    var name = node.name;
-    while (node) {
+// To rename global variables, we enumerate all ASTs looking for direct references as well as indirect ones through
+// the global object (i.e. `window.foo`). 
+// Somewhat optimistically, we assume that the user wants to rename the both types of references.
+function computeGlobalVariableRenaming(ast, name) {
+    inferTypes(ast);
+    var ids = [];
+    var global = ast.global.rep();
+    function visit(node, shadowed) {
         switch (node.type) {
-            case 'Program':
-                return node;
+            case 'Identifier':
+                if (node.name === name) {
+                    var clazz = classifyId(node);
+                    if (clazz.type === 'variable' && !shadowed) {
+                        ids.push(node);
+                    } else if (clazz.type === 'property' && clazz.base.type_node.rep() === global) {
+                        ids.push(node);
+                    }
+                }
+                break;
             case 'FunctionDeclaration':
             case 'FunctionExpression':
             case 'CatchClause':
-                if (node.env_type.has(name))
-                    return node;
+                if (node.$env.has(name)) {
+                    if (!shadowed && node.type === 'FunctionDeclaration' && node.id.name === name) {
+                        ids.push(node.id); // name belongs to outer scope
+                    }
+                    shadowed = true;
+                }
                 break;
         }
-        node = node.$parent;
+        var list = children(node);
+        for (var i=0; i<list.length; i++) {
+            visit(list[i], shadowed);
+        }
     }
+    visit(ast, false);
+    return [ids];
 }
 
-function computeVariableRenaming(node) {
-    var scope = getVarDeclScope(node);
-    if (scope.type === 'Program') {
-        /* global variable */
-        return computeGlobalVariableRenaming(node.name);
-    } else {
-        /* local variable */
-        return computeLocalVariableRenaming(scope, name);
-    }
-}
-
-function computeGlobalVaribaleRenaming(name) {
-
-}
+// To rename local variables, we search its scope for references and cut off the search if the
+// variable gets shadowed.
+// We choose to ignore with statements because their use is frowned upon and seldom seen in practice;
+// they just don't seem worth the trouble.
 function computeLocalVariableRenaming(scope, name) {
     var ids = [];
     function visit(node) {
@@ -976,29 +985,94 @@ function computeLocalVariableRenaming(scope, name) {
                 break;
             case 'FunctionDeclaration':
             case 'FunctionExpression':
-                break;
             case 'CatchClause':
+                if (node.$env.has(name)) { // shadowed?
+                    if (node.type === 'FunctionDeclaration' && node.id.name === name) {
+                        ids.push(node.id); // belongs to outer scope, hence not shadowed 
+                    }
+                    return;
+                }
                 break;
         }
+        children(node).forEach(visit);
     }
+    visit(scope);
+    return [ids];
 }
 
+// Public API
+// -----------------------------------------------
+// `JavaScriptBuffer` provides an AST-agnostic interface that deals with abstract file names
+// and source code offsets instead of node pointers.
+function JavaScriptBuffer() {
+    this.asts = {type:'ProgramCollection', programs:[]};
+}
 
-if (require.main === module) {
+/**  Adds a file to this buffer. 
+     `file` can be any string unique to this file, typically derived from the file name. */
+JavaScriptBuffer.prototype.add = function(file, source_code) {
+    var ast = esprima.parse(source_code, {ranges:true});
+    this.addAST(file, ast);
+};
+
+/** Adds a file to this buffer provided the AST of the source code. 
+    The AST must have been produced with the Esprima option `ranges:true`.
+    If you don't already have an AST, then use `add` instead. */
+JavaScriptBuffer.prototype.addAST = function(file, ast) {
+    ast.file = file;
+    injectParentPointers(ast);
+    buildEnvs(ast);
+    this.asts.programs.push(ast);
+};
+
+/** If true, renaming the identifier at the given offset does not affect other files */
+JavaScriptBuffer.prototype.canRenameLocally = function(file, offset) {
+    var c = this.classify(file,offset);
+    return c === 'local' || c === 'label';
+};
+
+/** Returns "local", "global", "property", or "label" or null.
+    For non-null return values, the identifier at the given offset can be renamed */
+JavaScriptBuffer.prototype.classify = function(file, offset) {
+    var ast = findAstForFile(this.asts, file);
+    if (ast === null)
+        return null;
+    var node = findNodeAt(ast, offset);
+    if (node === null)
+        return null;
+    if (node.type !== 'Identifier')
+        return null;
+    var clazz = classifyId(node);
+    switch (clazz.type) {
+        case "variable": return getVarDeclScope(node).type === 'Program' ? "global" : "local";
+        case "property": return "property";
+        case "label": return "label";
+    }
+};
+
+/** Returns null or a Range[][] object where each Range[] is a group of tokens that are related,
+    and Range denotes the type {0:<start>, 1:<end>}. */
+JavaScriptBuffer.prototype.rename = function(file,offset) {
+    return computeRenaming(this.asts, file, offset);
+};
+
+/** Removes all contents of the buffer */
+JavaScriptBuffer.prototype.clear = function() {
+    this.asts.programs = [];
+};
+
+
+// Entry Point
+// -----------------------------------------------
+// A simple entry point for testing purposes
+if (require && require.main === module) {
     var es = require('../lib/esprima'), fs = require('fs');
     var text = fs.readFileSync(process.argv[2], {encoding:"utf8"});
     var ast = es.parse(text, {range:true});
-    // console.d
-    //console.dir(ast.range);
-    // console.log(JSON.stringify(ast));
     inferTypes(ast);
     var groups = computeRenamingGroupsForName(ast, "add");
     groups.forEach(function(group) {
         var texts = group.map(function(range) {return text.substring(range.start, range.end);});
         console.log(texts.join(", "));
     });
-    // console.dir(groups);
-    // computeRenaming(ast);
-    // printTypes(ast);
-
 }
