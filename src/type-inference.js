@@ -927,7 +927,15 @@ function computeLocalVariableRenaming(scope, name) {
 // Public API
 // -----------------------------------------------
 // `JavaScriptBuffer` provides an AST-agnostic interface that deals with abstract file names
-// and source code offsets instead of node pointers.
+// and source code offsets instead of node pointers. Abstract file names are strings used to
+// uniquely identify a script loaded into the buffer; they need not be paths in any file system.
+// We use the following two types to describe ranges in the source code.
+//
+//     type Range = { range:int[2], 
+//                    loc: { start:Loc, 
+//                           end:Loc }}
+//     type Loc = {line:int, column:int}
+// 
 var esprima = require('esprima');
 
 function JavaScriptBuffer() {
@@ -935,17 +943,20 @@ function JavaScriptBuffer() {
 }
 
 /**  Adds a file to this buffer. 
-     `file` can be any string unique to this file, typically derived from the file name. */
-JavaScriptBuffer.prototype.add = function(file, source_code) {
+     `file` can be any string unique to this file, typically derived from the file name.
+     Files with the same `global_id` share the same global object. */
+JavaScriptBuffer.prototype.add = function(file, source_code, global_id) {
+    global_id = global_id || "default";
     var ast = esprima.parse(source_code, {range:true, tolerant:true, loc:true});
-    this.addAST(file, ast);
+    this.addAST(file, ast, global_id);
 };
 
 /** Adds a file to this buffer provided the AST of the source code. 
     The AST must have been produced with the Esprima option `ranges:true`.
     If you don't already have an AST, then use `add` instead. */
-JavaScriptBuffer.prototype.addAST = function(file, ast) {
+JavaScriptBuffer.prototype.addAST = function(file, ast, global_id) {
     ast.file = file;
+    ast.global_id = global_id;
     injectParentPointers(ast);
     buildEnvs(ast);
     this.asts.programs.push(ast);
@@ -978,14 +989,53 @@ JavaScriptBuffer.prototype.classify = function(file, offset) {
 
 /** Returns null or a Range[][] object where each Range[] is a group of tokens that are related,
     and Range denotes the type {0:<start>, 1:<end>}. */
-JavaScriptBuffer.prototype.rename = function(file,offset) {
-    return computeRenaming(this.asts, file, offset);
+JavaScriptBuffer.prototype.renameTokenAt = function(file,offset) {
+    var list = computeRenaming(this.asts, file, offset);
+    list.forEach(nodesToRanges);
+    return list;
+};
+
+JavaScriptBuffer.prototype.renamePropertyName = function(name) {
+    inferTypes(this.asts);
+    var list = computePropertyRenaming(this.asts, name);
+    list.forEach(nodesToRanges);
+    return list;
 };
 
 /** Removes all contents of the buffer */
 JavaScriptBuffer.prototype.clear = function() {
     this.asts.programs = [];
 };
+
+exports.JavaScriptBuffer = JavaScriptBuffer;
+
+
+function getNodeFile(node) {
+    while (node && !node.file) {
+        node = node.$parent;
+    }
+    return node && node.file;
+}
+function nodeRange(node) {
+    return {
+        file: getNodeFile(node),
+        start: {
+            offset: node.range[0],
+            line: node.loc.start.line,
+            column: node.loc.start.column
+        },
+        end : {
+            offset: node.range[1],
+            line: node.loc.end.line,
+            column: node.loc.end.column
+        }
+    };
+}
+function nodesToRanges(list) {
+    for (var i=0; i<list.length; i++) {
+        list[i] = nodeRange(list[i]);
+    }
+}
 
 
 // Entry Point
@@ -999,32 +1049,22 @@ if (require && require.main === module) {
     var lines = text.split(/\r?\n|\r/);
     var buffer = new JavaScriptBuffer;
     buffer.add(filename, text);
-    inferTypes(buffer.asts);
-    var groups = computePropertyRenaming(buffer.asts, process.argv[3] || "add");
+    // inferTypes(buffer.asts);
+    // var groups = computePropertyRenaming(buffer.asts, );
+    var groups = buffer.renamePropertyName(process.argv[3] || "add");
     groups.forEach(function(group) {
         console.log(clc.green("---------------- (" + group.length + ")"));
         group.forEach(function (item,index) {
             if (index > 0) console.log(clc.blackBright("--"));
-            var idx = item.loc.start.line - 1;
+            var idx = item.start.line - 1;
             var line = lines[idx];
-            line = clc.black(line.substring(0,item.loc.start.column)) + 
-                   clc.red(line.substring(item.loc.start.column, item.loc.end.column)) +
-                   clc.black(line.substring(item.loc.end.column));
+            line = clc.black(line.substring(0,item.start.column)) + 
+                   clc.red(line.substring(item.start.column, item.end.column)) +
+                   clc.black(line.substring(item.end.column));
             console.log(clc.black(lines[idx-1]) || '');
             console.log(line);
             console.log(clc.black(lines[idx+1]) || '');
         });
-        // function preview(node) {
-        //     if (node.$parent.type === 'Property') {
-        //         return '{' + text.substring(node.range[0], node.range[1]) + '}';
-        //     } else if (node.$parent.loc.start.line != node.$parent.loc.end.line) {
-        //         return "(..)." + classifyId(node).name;
-        //     } else {
-        //         return text.substring(node.$parent.range[0], node.$parent.range[1]);
-        //     }
-        // }
-        // var texts = group.map(function(node) {return node.loc.start.line + ":" + node.loc.start.column + " " + preview(node);});
-        // console.log(texts.join(", "));
     });
     console.log(clc.green("----------------"));
 }
