@@ -26,6 +26,7 @@ Map.prototype.forEach = function(callback) {
         callback(k.substring(1), this[k]);
     }
 };
+exports.Map = Map; // TODO: move Map somewhere else
 
 // Ast Manipulation
 // ----------------
@@ -820,6 +821,8 @@ function getLabelDecl(node) {
     var name = node.name;
     while (node && node.type !== 'LabeledStatement' && node.label.name !== name) {
         node = node.$parent;
+        if (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression')
+            return null;
     }
     return node || null;
 }
