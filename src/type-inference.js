@@ -969,14 +969,14 @@ JavaScriptBuffer.prototype.classify = function(file, offset) {
     and Range denotes the type {0:<start>, 1:<end>}. */
 JavaScriptBuffer.prototype.renameTokenAt = function(file,offset) {
     var list = computeRenaming(this.asts, file, offset);
-    list.forEach(nodesToRanges);
+    list.forEach(identifiersToRanges);
     return list;
 };
 
 JavaScriptBuffer.prototype.renamePropertyName = function(name) {
     inferTypes(this.asts);
     var list = computePropertyRenaming(this.asts, name);
-    list.forEach(nodesToRanges);
+    list.forEach(identifiersToRanges);
     return list;
 };
 
@@ -994,24 +994,25 @@ function getNodeFile(node) {
     }
     return node && node.file;
 }
-function nodeRange(node) {
+function identifierRange(node) {
+    delta = node.type === 'Literal' ? 1 : 0; // skip quote
     return {
         file: getNodeFile(node),
         start: {
-            offset: node.range[0],
+            offset: node.range[0] + delta,
             line: node.loc.start.line,
-            column: node.loc.start.column
+            column: node.loc.start.column + delta
         },
         end : {
-            offset: node.range[1],
+            offset: node.range[1] - delta,
             line: node.loc.end.line,
-            column: node.loc.end.column
+            column: node.loc.end.column - delta
         }
     };
 }
-function nodesToRanges(list) {
+function identifiersToRanges(list) {
     for (var i=0; i<list.length; i++) {
-        list[i] = nodeRange(list[i]);
+        list[i] = identifierRange(list[i]);
     }
 }
 
