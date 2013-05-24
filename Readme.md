@@ -1,6 +1,10 @@
+Lightweight Refactoring Tools for JavaScript
+============================================
+
 Lightweight analysis tools for JavaScript, geared towards automated refactoring support.
 
-Usage (so far):
+Basic Usage
+-----------
 	
 	var jsb = new JavaScriptBuffer;
 	jsb.add(<filename>, <source code>);
@@ -20,3 +24,16 @@ The groups returned are of type `Range[][]` given the following type schema:
     }
 
 Each `Range[]` object in the topmost array is one group of identifiers that should be renamed together.
+
+Usage Details
+-------------
+
+For renaming local variables and labels, loading all files into the buffer is not necessary. For that reason,
+one may use the following approach:
+
+	jsb.add(<current file>, <source code>)
+	if (!jsb.canRenameLocally(<current file>, <offset>))  {
+		/* add all other files that should be updated */
+	}
+
+For the time being, a `JavaScriptBuffer` object should not be reused once a rename function has been invoked.
