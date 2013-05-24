@@ -4,7 +4,6 @@ Usage (so far):
 	
 	var jsb = new JavaScriptBuffer;
 	jsb.add(<filename>, <source code>);
-	/* add more files */
 	var groups = jsb.renameTokenAt(<offset>);
 	
 The groups returned are of type `Range[][]` given the following type schema:
