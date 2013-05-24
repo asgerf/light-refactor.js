@@ -1,32 +1,7 @@
 // Unification-Based Type Inference for JavaScript
 // ===============================================
 
-// Map Datatype
-// ------------
-// We need a simple way to represent maps with string keys.
-function Map() {
-}
-Map.prototype.put = function(key, val) {
-    this['$' + key] = val;
-};
-Map.prototype.get = function(key) {
-    return this['$' + key];
-};
-Map.prototype.has = function(key) {
-    return this.hasOwnProperty('$' + key);
-};
-Map.prototype.remove = function(key) {
-    delete this['$' + key];
-};
-Map.prototype.forEach = function(callback) {
-    for (var k in this) {
-        if (!this.hasOwnProperty(k)) {
-            continue;
-        }
-        callback(k.substring(1), this[k]);
-    }
-};
-exports.Map = Map; // TODO: move Map somewhere else
+var Map = require('./map').Map;
 
 // Ast Manipulation
 // ----------------
