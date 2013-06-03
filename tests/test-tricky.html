@@ -1,0 +1,23 @@
+<html>
+	<head>
+		<script>
+			// <boo onload="not an onload event"/>
+		</script>
+	</head>
+	<body>
+		<!--
+			<boo onload="also not onload event"/>
+
+			<script>
+				var x = "not really a script tag";
+			</script>
+		-->
+
+		<![CDATA[
+			<script>
+				var z = "not script";
+			</script>
+		]]>
+	</body>
+</html>
+	
