@@ -36,6 +36,21 @@ var extract = module.exports = function(code) {
 	var isScriptTag = false;
 	var result = [];
 
+	function isTagChar(ch) {
+		if (typeof ch === "undefined") return false;
+		switch (ch) {
+			case ' ':
+			case '\r':
+			case '\n':
+			case '\t':
+			case '\v':
+			case '/':
+			case '>':
+				return false;
+		}
+		return true;
+	}
+
 	function match(text, start, end) {
 		// TODO: experiment with faster implementations
 		if (typeof end === 'undefined') {
@@ -95,7 +110,7 @@ var extract = module.exports = function(code) {
 					state = BetweenAttributes;
 					break;
 				case '>':
-					endOfTagName = i; // TODO: check tag
+					endOfTagName = i;
 					onFinishTagName();
 					onFinishTag();
 					state = isScriptTag ? InsideScriptTag : Init;
@@ -158,7 +173,7 @@ var extract = module.exports = function(code) {
 					break;
 				case '>':
 					onFinishTag(); // note: we discard this attribute, because we don't care about no-value attributes
-					state = Init; // TODO: check tag
+					state = isScriptTag ? InsideScriptTag : Init;
 					break;
 				case '/':
 					isSelfClosingTag = true;
@@ -182,7 +197,7 @@ var extract = module.exports = function(code) {
 					break;
 				case '>':
 					onFinishTag(); // note: we discard this attribute, because we don't care about no-value attributes
-					state = Init; // TODO: check tag
+					state = isScriptTag ? InsideScriptTag : Init;
 					break;
 				case '/':
 					startOfAttrValue = i;
@@ -237,35 +252,18 @@ var extract = module.exports = function(code) {
 				endOfAttrValue = i;
 				onFinishAttr();
 				state = BetweenAttributes;
-			} else if (c === '\r' || c === '\n') {
-				state = BetweenAttributes; // bail out if line-break inside attribute value
-				// TODO: test experimentally what is the best strategy here. compare with browser behaviour.
 			}
 			break;
 
 			case InsideScriptTag: // TODO: detect CDATA trick and comment trick
 			// TODO: use inner loop to speed up?
-			if (c === '>') {
-				var j = i-1;
-				loop: while (true) {
-					switch (code[j]) {
-						case ' ':
-						case '\r':
-						case '\n':
-						case '\t':
-						case '\v':
-							j--;
-							continue loop;
-						case 't':
-							if (match('</scrip', j-7)) { // TODO: what about "< / script" ?
-								endOfScriptBody = j-7;
-								onFinishScript();
-								state = Init;
-							}
-							break loop;
-						default:
-							break loop;
-					}
+			if (c === '<') {
+				if (match('/script', i+1) && !isTagChar(code[i+8])) {
+					endOfScriptBody = i;
+					onFinishScript();
+					i = i+7;
+					isCloseTag = true;
+					state = InsideTagName;
 				}
 			}
 			break;
@@ -288,7 +286,12 @@ var extract = module.exports = function(code) {
 			break;
 		}
 	}
-
+	// end of code; check if we are in an unfinished script tag
+	if (state === InsideScriptTag) {
+		endOfScriptBody = codeLen;
+		onFinishScript();
+	}
+	
 	// TODO: Try ways to avoid closure vars, and compare performance
 	var scriptTagIsJavaScript;
 	var startOfScriptSrc;
@@ -378,7 +381,7 @@ var extract = module.exports = function(code) {
 			return;
 		if (!match('href', startOfAttrName, endOfAttrName))
 			return;
-		if (!match('javascript:', startOfAttrValue))
+		if (!match('javascript:', startOfAttrValue)) // TODO: detect whitespace?
 			return;
 		outputJavaScript({
 			type: "href",
@@ -391,11 +394,6 @@ var extract = module.exports = function(code) {
 
 	function outputJavaScript(obj) {
 		result.push(obj);
-		for (k in obj) { // FIXME: debugging hack to test offsets
-			if (obj[k].start) {
-				obj[k].txt = code.substring(obj[k].start, obj[k].end);
-			}
-		}
 	}
 
 	return result;
@@ -406,5 +404,13 @@ if (require.main === module) {
 	var fs = require('fs')
 	var code = fs.readFileSync(process.argv[2], 'utf8');
 	var chunks = extract(code);
+	for (i in chunks) {
+		var obj = chunks[i]
+		for (k in obj) {
+			if (obj[k].start) {
+				obj[k].txt = code.substring(obj[k].start, obj[k].end);
+			}
+		}
+	}
 	console.dir(chunks);
 }
