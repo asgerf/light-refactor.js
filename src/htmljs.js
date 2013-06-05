@@ -2,20 +2,19 @@
 // =====================================
 
 var extract = module.exports = function(code) {
-	var state = 0;
-
-	// Lexer states				// examples:
-	var Init = 0;				// ""
-	var OpenTag = 1; 			// "<"
-	var InsideTagName = 2;		// "<foo"
-	var BetweenAttributes = 3;	// "<foo "  "<foo bar=5 "
+	// Lexer states
+	var Init = 0;
+	var OpenTag = 1;
+	var InsideTagName = 2;
+	var BetweenAttributes = 3;
 	var InsideAttrName = 4;
 	var BeforeAttrValue = 5;
 	var InsideAttrValue = 6;
 	var InsideQuotedAttrValue = 7;
 	var InsideScriptTag = 8;
-	var InsideComment = 9;
-	var InsideCData = 10;
+	var InsideStyleTag = 9;
+	var InsideComment = 10;
+	var InsideCData = 11;
 
 	var isCloseTag = false;
 	var isSelfClosingTag = false;
@@ -29,16 +28,14 @@ var extract = module.exports = function(code) {
 	var startOfScriptBody = -1;
 	var endOfScriptBody = -1;
 
-	// TODO: handle style tags??
-
 	var quote = '\0';
 
 	var isScriptTag = false;
 	var result = [];
 
 	function isTagChar(ch) {
-		if (typeof ch === "undefined") return false;
 		switch (ch) {
+			case undefined:
 			case ' ':
 			case '\r':
 			case '\n':
@@ -52,7 +49,6 @@ var extract = module.exports = function(code) {
 	}
 
 	function match(text, start, end) {
-		// TODO: experiment with faster implementations
 		if (typeof end === 'undefined') {
 			end = start + text.length;
 		} else if (end - start !== text.length) {
@@ -64,11 +60,12 @@ var extract = module.exports = function(code) {
 	}
 
 	var codeLen = code.length;
+	var state = Init;
 	for (var i=0; i<codeLen; i++) {
 		var c = code[i];
 		switch (state) {
 			case Init:
-			// TODO: use inner loop to speed up?
+			while (c !== '<' && i<codeLen) c = code[++i]; 
 			if (c === '<') {
 				state = OpenTag;
 				isCloseTag = false;
@@ -112,8 +109,8 @@ var extract = module.exports = function(code) {
 				case '>':
 					endOfTagName = i;
 					onFinishTagName();
-					onFinishTag();
-					state = isScriptTag ? InsideScriptTag : Init;
+					onFinishTag(i);
+					state = enterTagBody();
 					break;
 				case '/':
 					onFinishTagName();
@@ -144,8 +141,8 @@ var extract = module.exports = function(code) {
 				case '\v':
 					break;
 				case '>':
-					onFinishTag();
-					state = isScriptTag ? InsideScriptTag : Init;
+					onFinishTag(i);
+					state = enterTagBody();
 					break;
 				case '/':
 					isSelfClosingTag = true;
@@ -172,8 +169,8 @@ var extract = module.exports = function(code) {
 					state = BetweenAttributes;
 					break;
 				case '>':
-					onFinishTag(); // note: we discard this attribute, because we don't care about no-value attributes
-					state = isScriptTag ? InsideScriptTag : Init;
+					onFinishTag(i); // note: we discard this attribute, because we don't care about no-value attributes
+					state = enterTagBody();
 					break;
 				case '/':
 					isSelfClosingTag = true;
@@ -196,8 +193,8 @@ var extract = module.exports = function(code) {
 				case '\v':
 					break;
 				case '>':
-					onFinishTag(); // note: we discard this attribute, because we don't care about no-value attributes
-					state = isScriptTag ? InsideScriptTag : Init;
+					onFinishTag(i); // note: we discard this attribute, because we don't care about no-value attributes
+					state = enterTagBody();
 					break;
 				case '/':
 					startOfAttrValue = i;
@@ -237,8 +234,8 @@ var extract = module.exports = function(code) {
 						endOfAttrValue = i;
 					}
 					onFinishAttr();
-					onFinishTag();
-					state = isScriptTag ? InsideScriptTag : Init;
+					onFinishTag(i);
+					state = enterTagBody();
 					break;
 				case '/': // handle '/' as regular attribute value
 				default:
@@ -248,6 +245,7 @@ var extract = module.exports = function(code) {
 			break;
 
 			case InsideQuotedAttrValue:
+			while (c !== quote && i<codeLen) c = code[++i]; 
 			if (c === quote) {
 				endOfAttrValue = i;
 				onFinishAttr();
@@ -256,7 +254,7 @@ var extract = module.exports = function(code) {
 			break;
 
 			case InsideScriptTag: // TODO: detect CDATA trick and comment trick
-			// TODO: use inner loop to speed up?
+			while (c !== '<' && i<codeLen) c = code[++i]; 
 			if (c === '<') {
 				if (match('/script', i+1) && !isTagChar(code[i+8])) {
 					endOfScriptBody = i;
@@ -268,7 +266,19 @@ var extract = module.exports = function(code) {
 			}
 			break;
 
+			case InsideStyleTag:
+			while (c !== '<' && i<codeLen) c = code[++i]; 
+			if (c === '<') {
+				if (match('/style', i+1) && !isTagChar(code[i+7])) {
+					i = i+6;
+					isCloseTag = true;
+					state = InsideTagName;
+				}
+			}
+			break;
+
 			case InsideComment:
+			while (c !== '>' && i<codeLen) c = code[++i]; 
 			if (c === '>') { // end of comment: -->
 				// take care not to match <!--> and <!---> (but <!----> is ok) (TODO check with browser)
 				if (i - startOfTagName > 3 && code[i-1] === '-' && code[i-2] === '-') {
@@ -278,6 +288,7 @@ var extract = module.exports = function(code) {
 			break;
 
 			case InsideCData:
+			while (c !== '>' && i<codeLen) c = code[++i]; 
 			if (c === '>') {
 				if (match(']]',i-2)) {
 					state = Init;
@@ -292,10 +303,19 @@ var extract = module.exports = function(code) {
 		onFinishScript();
 	}
 	
-	// TODO: Try ways to avoid closure vars, and compare performance
 	var scriptTagIsJavaScript;
 	var startOfScriptSrc;
 	var endOfScriptSrc
+
+	function enterTagBody() {
+		if (isScriptTag) {
+			return InsideScriptTag;
+		}
+		if (match('style', startOfTagName, endOfTagName) && !isCloseTag && !isSelfClosingTag) {
+			return InsideStyleTag
+		}
+		return Init;
+	}
 
 	function onFinishTagName() {
 		if (isCloseTag)
@@ -322,11 +342,11 @@ var extract = module.exports = function(code) {
 		tryHrefJavaScript();
 	}
 
-	function onFinishTag() {
+	function onFinishTag(i) {
 		if (isScriptTag) {
-			startOfScriptBody = i+1; // TODO: nicer way to read offset?
+			startOfScriptBody = i+1;
 		}
-	} // TODO: if we really don't need this, then remove it
+	}
 
 	function onFinishScript() {
 		tryScript();
@@ -356,7 +376,6 @@ var extract = module.exports = function(code) {
 	}
 	
 	function tryEventHandler() {
-		// TODO: handle namespace prefixes?
 		if (!match('on', startOfAttrName))
 			return;
 		outputJavaScript({

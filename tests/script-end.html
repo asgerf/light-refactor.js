@@ -1,0 +1,34 @@
+<html>
+	<body>
+		<script>
+			var text = "</script>"; // script ends HERE
+			var foo = "is this javascript?";
+		</script>
+		<br/>
+		<script><![CDATA[
+			var text = "</script>"; // script ends HERE
+			var foo = "inside CDATA";
+		]]></script>
+
+		<br/>
+		<script><!--
+			var text = "</script>"; // script ends HERE
+			var foo = "inside comment";
+		--></script>
+
+		<br/>
+		<script>/*
+			var text = "end?";
+		< /script>
+		</ script>
+		</script *//*/ >
+		after script
+		<br>
+
+		<script>/*
+			var text = "end?";
+		</script+>
+		inside script?
+		</script>
+	</body>
+</html>
