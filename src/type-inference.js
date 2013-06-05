@@ -301,7 +301,7 @@ function inferTypes(asts) {
     }
     function argumentType(fun, index) {
         if (index < fun.params.length) {
-            return getEnv(fun).getPrty(fun.params[index]);
+            return getEnv(fun).getPrty(fun.params[index].name);
         } else {
             return new TypeNode;
         }
