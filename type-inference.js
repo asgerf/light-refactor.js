@@ -991,9 +991,6 @@ JavaScriptBuffer.prototype.clear = function() {
     this.asts.programs = [];
 };
 
-exports.JavaScriptBuffer = JavaScriptBuffer;
-
-
 function getNodeFile(node) {
     while (node && !node.file) {
         node = node.$parent;
