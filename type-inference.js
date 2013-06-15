@@ -754,7 +754,7 @@ function computeRenaming(ast, file, offset) {
             break;
         case 'property':
             inferTypes(ast);
-            if (node.base.type_node.rep() === ast.global.rep()) {
+            if (idClass.base.type_node.rep() === ast.global.rep()) {
                 groups = computeGlobalVariableRenaming(ast, node.name);
             } else {
                 groups = computePropertyRenaming(ast, node.name);
