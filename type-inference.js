@@ -5,7 +5,7 @@
     if (typeof exports === 'object') {
         module.exports = factory(require('./map'), require('./lib/esprima'));
     } else if (typeof define === 'function' && define.amd) {
-        define(['map', 'lib/esprima'], factory);
+        define(['./map', './lib/esprima'], factory);
     } else {
         root.JavaScriptBuffer = factory(root.Map, root.esprima);
     }
