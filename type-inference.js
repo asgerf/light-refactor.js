@@ -121,6 +121,9 @@ function inRange(range, x) {
     return range[0] <= x && x <= range[1];
 }
 function findNodeAt(node, offset) {
+    if (!("range" in node)) {
+        throw new Error("No range in node: " + node + " : " + node.type)
+    }
     if (!inRange(node.range, offset))
         return null;
     var list = children(node);
@@ -725,11 +728,11 @@ function classifyId(node) {
 // To rename an identifier given some position, we find the identifier token, classify it, and then dispatch
 // to the proper renaming function (defined below).
 function computeRenaming(ast, file, offset) {
-    var targetAst = findAstForFile(ast);
+    var targetAst = findAstForFile(ast, file);
     if (targetAst === null) {
         throw new Error("Could not find AST for file " + file);
     }
-    var node = findNodeAt(ast, offset);
+    var node = findNodeAt(targetAst, offset);
     if (node === null)
         return null;
     var idClass = classifyId(node);
@@ -975,6 +978,8 @@ JavaScriptBuffer.prototype.classify = function(file, offset) {
     and Range denotes the type {0:<start>, 1:<end>}. */
 JavaScriptBuffer.prototype.renameTokenAt = function(file,offset) {
     var list = computeRenaming(this.asts, file, offset);
+    if (list === null)
+        return null
     list.forEach(identifiersToRanges);
     return list;
 };
@@ -982,6 +987,8 @@ JavaScriptBuffer.prototype.renameTokenAt = function(file,offset) {
 JavaScriptBuffer.prototype.renamePropertyName = function(name) {
     inferTypes(this.asts);
     var list = computePropertyRenaming(this.asts, name);
+    if (list === null)
+        return null
     list.forEach(identifiersToRanges);
     return list;
 };
