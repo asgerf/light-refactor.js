@@ -1,7 +1,15 @@
 // Unification-Based Type Inference for JavaScript
 // ===============================================
 
-var Map = require('./map').Map;
+(function (root, factory) { // Universal Module Definition (https://github.com/umdjs/umd)
+    if (typeof exports === 'object') {
+        module.exports = factory(require('./map'));
+    } else if (typeof define === 'function' && define.amd) {
+        define(['map'], factory);
+    } else {
+        root.JavaScriptBuffer = factory(root.Map);
+    }
+}(this, function (Map) {
 
 // Ast Manipulation
 // ----------------
@@ -914,7 +922,7 @@ function computeLocalVariableRenaming(scope, name) {
 //                           end:Loc }}
 //     type Loc = {line:int, column:int}
 // 
-var esprima = require('esprima');
+var esprima = require('./lib/esprima');
 
 function JavaScriptBuffer() {
     this.asts = {type:'ProgramCollection', programs:[]};
@@ -1015,35 +1023,41 @@ function identifiersToRanges(list) {
         list[i] = identifierRange(list[i]);
     }
 }
+    
+return JavaScriptBuffer
+
+})); // end of UMD
 
 
 // Entry Point
 // -----------------------------------------------
 // A simple entry point for testing purposes
-if (require && require.main === module) {
-    var fs = require('fs'),
-        clc = require('cli-color');
-    var filename = process.argv[2];
-    var text = fs.readFileSync(filename, {encoding:"utf8"});
-    var lines = text.split(/\r?\n|\r/);
-    var buffer = new JavaScriptBuffer;
-    buffer.add(filename, text);
-    // inferTypes(buffer.asts);
-    // var groups = computePropertyRenaming(buffer.asts, );
-    var groups = buffer.renamePropertyName(process.argv[3] || "add");
-    groups.forEach(function(group) {
-        console.log(clc.green("---------------- (" + group.length + ")"));
-        group.forEach(function (item,index) {
-            if (index > 0) console.log(clc.blackBright("--"));
-            var idx = item.start.line - 1;
-            var line = lines[idx];
-            line = clc.black(line.substring(0,item.start.column)) + 
-                   clc.red(line.substring(item.start.column, item.end.column)) +
-                   clc.black(line.substring(item.end.column));
-            console.log(clc.black(lines[idx-1]) || '');
-            console.log(line);
-            console.log(clc.black(lines[idx+1]) || '');
+if (require && module && require.main === module) {
+    (function(JavaScriptBuffer) {
+        var fs = require('fs'),
+            clc = require('cli-color');
+        var filename = process.argv[2];
+        var text = fs.readFileSync(filename, {encoding:"utf8"});
+        var lines = text.split(/\r?\n|\r/);
+        var buffer = new JavaScriptBuffer;
+        buffer.add(filename, text);
+        // inferTypes(buffer.asts);
+        // var groups = computePropertyRenaming(buffer.asts, );
+        var groups = buffer.renamePropertyName(process.argv[3] || "add");
+        groups.forEach(function(group) {
+            console.log(clc.green("---------------- (" + group.length + ")"));
+            group.forEach(function (item,index) {
+                if (index > 0) console.log(clc.blackBright("--"));
+                var idx = item.start.line - 1;
+                var line = lines[idx];
+                line = clc.black(line.substring(0,item.start.column)) + 
+                       clc.red(line.substring(item.start.column, item.end.column)) +
+                       clc.black(line.substring(item.end.column));
+                console.log(clc.black(lines[idx-1]) || '');
+                console.log(line);
+                console.log(clc.black(lines[idx+1]) || '');
+            });
         });
-    });
-    console.log(clc.green("----------------"));
+        console.log(clc.green("----------------"));
+    })(module.exports)
 }

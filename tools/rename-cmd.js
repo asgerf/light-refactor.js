@@ -1,9 +1,11 @@
-var lr = require('./type-inference');
+#!/usr/bin/env node
+
+var JavaScriptBuffer = require('../type-inference');
 var fs = require('fs');
 var clc = require('cli-color');
 var readline = require('readline');
 var _ = require('underscore');
-var Map = require('./map').Map;
+var Map = require('../map');
 
 // Parse command-line arguments
 var files = [];
@@ -18,7 +20,7 @@ for (var i=2; i<process.argv.length; i++) {
 
 
 // Load files
-var buffer = new lr.JavaScriptBuffer;
+var buffer = new JavaScriptBuffer;
 var file2text = new Map; // TODO: avoid overhead from double representation
 var file2lines = new Map;
 files.forEach(function (filename) {

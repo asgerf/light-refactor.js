@@ -1,6 +1,13 @@
-// Map Datatype
-// ------------
-// We need a simple way to represent maps with string keys.
+(function (root, factory) {  // Universal Module Definition (https://github.com/umdjs/umd)
+    if (typeof exports === 'object') {
+        module.exports = factory();
+    } else if (typeof define === 'function' && define.amd) {
+        define(factory);
+    } else {
+        root.Map = factory();
+  }
+}(this, function () {
+    
 function Map() {
 }
 Map.prototype.put = function(key, val) {
@@ -23,7 +30,6 @@ Map.prototype.forEach = function(callback) {
         callback(k.substring(1), this[k]);
     }
 };
-exports.Map = Map;
 
 // Specialized methods
 Map.prototype.push = function(key, val) {
@@ -46,3 +52,7 @@ Map.groupBy = function(list, item2key) {
     }
     return map;
 };
+    
+return Map
+
+})); // end of UMD

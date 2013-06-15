@@ -1,7 +1,17 @@
 // htmljs.js: Locates JavaScript in HTML
 // =====================================
 
-var extract = module.exports = function(code) {
+(function (root, factory) {  // Universal Module Definition (https://github.com/umdjs/umd)
+    if (typeof exports === 'object') {
+        module.exports = factory();
+    } else if (typeof define === 'function' && define.amd) {
+        define(factory);
+    } else {
+        root.htmljs = factory();
+  }
+}(this, function () {
+
+return function(code) {
 	// Lexer states
 	var Init = 0;
 	var OpenTag = 1;
@@ -123,7 +133,7 @@ var extract = module.exports = function(code) {
 					}
 					break;
 				case '[': // check for CDATA section: <![CDATA[
-					if (match('![CDATA',startOfTagName,i)) {
+					if (match('![cdata',startOfTagName,i)) {
 						state = InsideCData;
 					}
 					break;
@@ -417,19 +427,6 @@ var extract = module.exports = function(code) {
 
 	return result;
 };
+    
+})); // end of UMD
 
-// Testing entry point
-if (require.main === module) {
-	var fs = require('fs')
-	var code = fs.readFileSync(process.argv[2], 'utf8');
-	var chunks = extract(code);
-	for (i in chunks) {
-		var obj = chunks[i]
-		for (k in obj) {
-			if (obj[k].start) {
-				obj[k].txt = code.substring(obj[k].start, obj[k].end);
-			}
-		}
-	}
-	console.dir(chunks);
-}
