@@ -764,7 +764,6 @@ function computeRenaming(ast, file, offset) {
                 groups = computeGlobalVariableRenaming(ast, node.name);
             } else {
                 groups = computePropertyRenaming(ast, node.name);
-                reorderGroupsStartingAt(groups, file, offset);
             }
             break;
         default: throw new Error("unknown id class: " + idClass.type);
@@ -805,7 +804,27 @@ function computePropertyRenaming(ast, name) {
 }
 
 function reorderGroupsStartingAt(groups, file, offset) {
-    /* TODO */
+    function compare(x,y) {
+        if (x.file !== y.file) {
+            if (x.file === file)
+                return -1;
+            if (y.file === file)
+                return 1;
+            return x.file < y.file ? -1 : 1;
+        }
+        if (x.file === file) { // start search from offset when in the target file
+            if (x.end.offset < offset && y.end.offset >= offset)
+                return 1
+            if (x.end.offset >= offset && y.end.offset < offset)
+                return -1
+        }
+        return x.start.offset - y.start.offset;
+    }
+    function compareGroups(x,y) {
+        return compare(x[0], y[0])
+    }
+    groups.forEach(function(x) { return x.sort(compare) })
+    groups.sort(compareGroups)
 }
 
 // To rename labels, we find its declaration (if any) and then search its scope for possible references.
@@ -992,6 +1011,7 @@ JavaScriptBuffer.prototype.renameTokenAt = function(file,offset) {
     if (list === null)
         return null
     list.forEach(identifiersToRanges);
+    reorderGroupsStartingAt(list, file, offset);
     return list;
 };
 
@@ -1001,6 +1021,7 @@ JavaScriptBuffer.prototype.renamePropertyName = function(name) {
     if (list === null)
         return null
     list.forEach(identifiersToRanges);
+    reorderGroupsStartingAt(list, null, null);
     return list;
 };
 
