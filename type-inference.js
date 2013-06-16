@@ -97,17 +97,23 @@ function buildEnvs(node, scope) {
 
 function getVarDeclScope(node) {
     var name = node.name;
+    var prev = node;
+    node = node.$parent;
     while (node) {
         switch (node.type) {
             case 'Program':
                 return node;
             case 'FunctionDeclaration':
+                if (prev !== node.id && node.$env.has(name))
+                    return node;
+                break;
             case 'FunctionExpression':
             case 'CatchClause':
                 if (node.$env.has(name))
                     return node;
                 break;
         }
+        prev = node;
         node = node.$parent;
     }
     return null;
@@ -746,7 +752,7 @@ function computeRenaming(ast, file, offset) {
                 inferTypes(ast);
                 groups = computeGlobalVariableRenaming(ast, node.name);
             } else {
-                groups = computeLocalVariableRenaming(scope, name);
+                groups = computeLocalVariableRenaming(scope, node.name);
             }
             break;
         case 'label':
@@ -899,7 +905,7 @@ function computeLocalVariableRenaming(scope, name) {
             case 'FunctionDeclaration':
             case 'FunctionExpression':
             case 'CatchClause':
-                if (node.$env.has(name)) { // shadowed?
+                if (node !== scope && node.$env.has(name)) { // shadowed?
                     if (node.type === 'FunctionDeclaration' && node.id.name === name) {
                         ids.push(node.id); // belongs to outer scope, hence not shadowed 
                     }
@@ -909,7 +915,12 @@ function computeLocalVariableRenaming(scope, name) {
         }
         children(node).forEach(visit);
     }
-    visit(scope);
+    if (scope.type === 'FunctionDeclaration') { // function decls name is not part of its own scope
+        scope.params.forEach(visit) 
+        visit(scope.body)
+    } else {
+        visit(scope)
+    }
     return [ids];
 }
 
