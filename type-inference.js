@@ -830,7 +830,7 @@ function reorderGroupsStartingAt(groups, file, offset) {
 // To rename labels, we find its declaration (if any) and then search its scope for possible references.
 function getLabelDecl(node) {
     var name = node.name;
-    while (node && node.type !== 'LabeledStatement' && node.label.name !== name) {
+    while (node && (node.type !== 'LabeledStatement' || node.label.name !== name)) {
         node = node.$parent;
         if (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression')
             return null;
@@ -838,7 +838,7 @@ function getLabelDecl(node) {
     return node || null;
 }
 function computeLabelRenaming(node) {
-    var name = node.label.name;
+    var name = node.name;
     var decl = getLabelDecl(node);
     var result;
     function visit(node) {
@@ -853,7 +853,7 @@ function computeLabelRenaming(node) {
             case 'BreakStatement':
             case 'ContinueStatement':
                 if (node.label !== null && node.label.name === name)
-                    result.add(node.label);
+                    result.push(node.label);
                 break;
         }
         children(node).forEach(visit);
@@ -867,6 +867,7 @@ function computeLabelRenaming(node) {
         search = decl.body;
     }
     visit(search);
+    return [result]
 }
 
 // To rename global variables, we enumerate all ASTs looking for direct references as well as indirect ones through
