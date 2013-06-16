@@ -283,7 +283,7 @@ function inferTypes(asts) {
         }
         return global.getPrty(name);
     }
-
+    
     /** Add variable to current environment. Used when entering a new scope. */
     function addVarToEnv(name) {
         if (typeof name !== "string")
@@ -298,10 +298,10 @@ function inferTypes(asts) {
     function getType(node) {
         if (node instanceof TypeNode)
             return node;
-        if (!node.type_node) {
-            node.type_node = new TypeNode;
+        if (!node.$type_node) {
+            node.$type_node = new TypeNode;
         }
-        return node.type_node;
+        return node.$type_node;
     }
     /** Environment of the given scope node (function or catch clause) */
     function getEnv(scope) {
@@ -311,14 +311,14 @@ function inferTypes(asts) {
     // We model the type of "this" using a fake local variable called `@this`.
     // The return type of a function is modeled with a variable called `@return`.
     function thisType(fun) {
-        return getEnv(fun).getPrty("@this");
+        return getEnv(fun).get("@this");
     }
     function returnType(fun) {
-        return getEnv(fun).getPrty("@return");
+        return getEnv(fun).get("@return");
     }
     function argumentType(fun, index) {
         if (index < fun.params.length) {
-            return getEnv(fun).getPrty(fun.params[index].name);
+            return getEnv(fun).get(fun.params[index].name);
         } else {
             return new TypeNode;
         }
@@ -371,7 +371,7 @@ function inferTypes(asts) {
         envStack.push(env);
         for (var i=0; i<fun.params.length; i++) {
             addVarToEnv(fun.params[i].name); // add params to env
-            fun.params[i].type_node = env.get(fun.params[i].name);
+            fun.params[i].$type_node = env.get(fun.params[i].name);
         }
         fun.$env.forEach(function (key,val) {
             addVarToEnv(key);
@@ -379,7 +379,7 @@ function inferTypes(asts) {
         if (expr && fun.id !== null) {
             addVarToEnv(fun.id.name); // add self-reference to environment
             unify(fun, env.get(fun.id.name));
-            fun.id.type_node = fun.type_node;
+            fun.id.$type_node = fun.$type_node;
         }
         addVarToEnv("@this");
         addVarToEnv("@return");
@@ -584,7 +584,7 @@ function inferTypes(asts) {
                 }
                 break;
             case "ReturnStatement":
-                if (node.arguments !== null) {
+                if (node.argument !== null) {
                     visitExp(node.argument, NotVoid);
                     unify(node.argument, getVar("@return"));
                 }
@@ -649,7 +649,7 @@ function inferTypes(asts) {
                             unify(getVar(decl.id.name), decl.init)
                         }
                     }
-                    decl.id.type_node = getVar(decl.id.name);
+                    decl.id.$type_node = getVar(decl.id.name);
                 }
                 break;
             default:
@@ -760,7 +760,7 @@ function computeRenaming(ast, file, offset) {
             break;
         case 'property':
             inferTypes(ast);
-            if (idClass.base.type_node.rep() === ast.global.rep()) {
+            if (idClass.base.$type_node.rep() === ast.global.rep()) {
                 groups = computeGlobalVariableRenaming(ast, node.name);
             } else {
                 groups = computePropertyRenaming(ast, node.name);
@@ -779,7 +779,7 @@ function computePropertyRenaming(ast, name) {
     var group2members = {};
     var global = ast.global.rep().id;
     function add(base, id) {
-        var key = base.type_node.rep().id;
+        var key = base.$type_node.rep().id;
         if (key === global)
             return; // global variables are kept separate
         if (!group2members[key]) {
@@ -864,7 +864,7 @@ function computeGlobalVariableRenaming(ast, name) {
                 if (clazz != null && clazz.name === name) {
                     if (clazz.type === 'variable' && !shadowed) {
                         ids.push(node);
-                    } else if (clazz.type === 'property' && clazz.base.type_node.rep() === global) {
+                    } else if (clazz.type === 'property' && clazz.base.$type_node.rep() === global) {
                         ids.push(node);
                     }
                 }
