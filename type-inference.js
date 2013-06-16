@@ -789,7 +789,7 @@ function computePropertyRenaming(ast, name) {
     }
     function visit(node) {
         var clazz = classifyId(node);
-        if (clazz != null && clazz.type === 'property' && clazz.name === name) {
+        if (clazz !== null && clazz.type === 'property' && clazz.name === name) {
             add(clazz.base, node);
         }
         children(node).forEach(visit);
@@ -861,7 +861,7 @@ function computeGlobalVariableRenaming(ast, name) {
             case 'Identifier':
             case 'Literal':
                 var clazz = classifyId(node);
-                if (clazz != null && clazz.name === name) {
+                if (clazz !== null && clazz.name === name) {
                     if (clazz.type === 'variable' && !shadowed) {
                         ids.push(node);
                     } else if (clazz.type === 'property' && clazz.base.$type_node.rep() === global) {
