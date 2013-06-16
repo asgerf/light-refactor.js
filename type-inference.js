@@ -305,7 +305,7 @@ function inferTypes(asts) {
     }
     /** Environment of the given scope node (function or catch clause) */
     function getEnv(scope) {
-        return scope.env_type || (scope.env_type = new Map);
+        return scope.$env_type || (scope.$env_type = new Map);
     }
 
     // We model the type of "this" using a fake local variable called `@this`.
@@ -367,7 +367,7 @@ function inferTypes(asts) {
     // - `visitExp(node, void_ctx)`.
     // - `visitFunction(fun, expr)`.
     function visitFunction(fun, expr) {
-        fun.env_type = env = new Map; // create new environment
+        fun.$env_type = env = new Map; // create new environment
         envStack.push(env);
         for (var i=0; i<fun.params.length; i++) {
             addVarToEnv(fun.params[i].name); // add params to env
@@ -599,7 +599,7 @@ function inferTypes(asts) {
                 visitStmt(node.finalizer);
                 break;
             case "CatchClause":
-                node.env_type = env = new Map; // create environment with exception var
+                node.$env_type = env = new Map; // create environment with exception var
                 envStack.push(env);
                 addVarToEnv(node.param.name);
                 visitStmt(node.body);
