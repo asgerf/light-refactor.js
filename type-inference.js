@@ -427,6 +427,9 @@ function inferTypes(asts) {
                         case "init":
                             visitExp(prty.value, NotVoid);
                             unify(typ.getPrty(name), prty.value);
+                            if (prty.value.type === 'FunctionExpression') {
+                                addPotentialMethod(typ, thisType(prty.value));
+                            }
                             break;
                         case "get":
                             visitFunction(prty.value);
@@ -463,6 +466,9 @@ function inferTypes(asts) {
                 if (node.operator === "=") {
                     if (!p) {
                         unify(node, node.left, node.right);
+                    }
+                    if (node.left.type === 'MemberExpression' && node.right.type === 'FunctionExpression') {
+                        addPotentialMethod(node.left.object, thisType(node.right));
                     }
                     return p;
                 } else {
