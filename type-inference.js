@@ -384,6 +384,7 @@ function inferTypes(asts) {
         addVarToEnv("@this");
         addVarToEnv("@return");
         addVarToEnv("arguments");
+        unify(thisType(fun), getType(fun).getPrty("prototype"))
         visitStmt(fun.body); // visit function body
         envStack.pop(); // restore original environment
         env = envStack[envStack.length-1];
