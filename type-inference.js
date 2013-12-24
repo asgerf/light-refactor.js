@@ -27,13 +27,13 @@ function children(node) {
         var val = node[k];
         if (!val)
             continue;
-        if (typeof val === "object" && typeof val.type === "string") {
+        if (val && typeof val === "object" && typeof val.type === "string") {
             result.push(val);
         }
         else if (val instanceof Array) {
             for (var i=0; i<val.length; i++) {
                 var elm = val[i];
-                if (typeof elm === "object" && typeof elm.type === "string") {
+                if (elm && typeof elm === "object" && typeof elm.type === "string") {
                     result.push(elm);
                 }
             }
@@ -399,8 +399,10 @@ function inferTypes(asts) {
                 var typ = getType(node);
                 for (var i=0; i<node.elements.length; i++) {
                     var elm = node.elements[i];
-                    visitExp(elm, NotVoid);
-                    unify(typ.getPrty("@array"), elm);
+                    if (elm) {
+                        visitExp(elm, NotVoid);
+                        unify(typ.getPrty("@array"), elm);
+                    }
                 }
                 return NotPrimitive;
             case "ObjectExpression":
