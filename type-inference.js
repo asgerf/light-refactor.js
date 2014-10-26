@@ -174,7 +174,10 @@ function TypeNode() {
     this.parent = this;
     this.rank = 0;
     this.prty = new Map;
+    this.tokens = new Map;
     this.namespace = false;
+    this.supers = []
+    this.functions = []
 }
 /** Returns root node, and performs path compression */
 TypeNode.prototype.rep = function() {
@@ -196,13 +199,37 @@ TypeNode.prototype.getPrty = function(name) {
     }
     return t.rep();
 }
+TypeNode.prototype.getToken = function(name) {
+    if (typeof name !== "string")
+        throw "Not a string: " + name;
+    var map = this.rep().tokens;
+    var t = map.get(name);
+    if (!t) {
+        t = new TypeNode;
+        map.put(name, t);
+    }
+    return t.rep();
+}
 
+// A class of TokenNodes represents a group of tokens that must be renamed together.
+function TokenNode() {
+    this.id = ++type_node_id;
+    this.parent = this
+    this.rank = 0
+}
+TypeNode.prototype.rep = function() {
+    if (this.parent != this) {
+        this.parent = this.parent.rep();
+    }
+    return this.parent;
+};
 
 // The `TypeUnifier` implements the unification procedure of the union-find algorithm.
 // Calling `unify(x,y)` will unify x and y. The `prty` maps of x and y will be partially
 // merged; the merging will be completed by calling the `complete` method.
 function TypeUnifier() {
     this.queue = [];
+    this.timestamp = 0;
 }
 TypeUnifier.prototype.unify = function(x,y) {
     x = x.rep();
@@ -231,9 +258,38 @@ TypeUnifier.prototype.unify = function(x,y) {
             dst[k] = src[k];
         }
     }
+    for (var k in y.tokens) {
+        if (k[0] !== '$')
+            continue;
+        if (x.tokens.hasOwnProperty(k)) {
+            this.unifyTokens(x.tokens[k], y.tokens[k])
+        } else {
+            x.tokens[k] = y.tokens[k];
+        }
+    }
+    x.supers = mergeArrays(x.supers, y.supers)
+    x.functions = mergeArrays(x.functions, y.functions)
     delete y.rank;
     delete y.prty;
     delete y.namespace;
+    delete y.supers
+    delete y.functions
+    this.timestamp += 1;
+};
+TypeUnifier.prototype.unifyTokens = function(x,y) {
+    x = x.rep();
+    y = y.rep();
+    if (x === y)
+        return;
+    if (x.rank < y.rank) {
+        var z = x; // swap x,y so x has the highest rank
+        x = y;
+        y = z;
+    } else if (x.rank === y.rank) {
+        x.rank += 1;
+    }
+    y.parent = x;
+    this.timestamp += 1
 };
 TypeUnifier.prototype.unifyLater = function(x,y) {
     if (x != y) {
@@ -249,6 +305,18 @@ TypeUnifier.prototype.complete = function() {
         this.unify(x,y);
     }
 };
+
+function mergeArrays(xs, ys) {
+    if (xs.length < ys.length) {
+        var tmp = xs;
+        xs = ys;
+        ys = tmp;
+    }
+    for (var i=0, len=ys.length; i < len; i++) {
+        xs.push(ys[i])
+    }
+    return xs;
+}
 
 // Type Inference
 // --------------
@@ -288,7 +356,7 @@ function inferTypes(asts) {
     /* Type of the given expression. For convenience acts as identity on type nodes */
     function getType(node) {
         if (node instanceof TypeNode)
-            return node;
+            return node.rep();
         if (!node.$type_node) {
             node.$type_node = new TypeNode;
         }
@@ -297,6 +365,14 @@ function inferTypes(asts) {
     /** Environment of the given scope node (function or catch clause) */
     function getEnv(scope) {
         return scope.$env_type || (scope.$env_type = new Map);
+    }
+    function pushEnv(newEnv) {
+        envStack.push(newEnv)
+        env = newEnv
+    }
+    function popEnv() {
+        envStack.pop()
+        env = envStack[envStack.length-1]
     }
 
     // We model the type of "this" using a fake local variable called `@this`.
@@ -341,7 +417,23 @@ function inferTypes(asts) {
             markAsNamespace(node.object);
         }
     }
-
+    
+    var nodesWithSuper = []
+    function addSuper(baseNode, superNode) {
+        baseNode = getType(baseNode)
+        superNode = getType(superNode)
+        if (baseNode.supers.length === 0) {
+            // If this is the first super node, record it in the list of nodes with supers
+            nodesWithSuper.push(baseNode)
+        }
+        baseNode.supers.push(superNode)
+    }
+    
+    var calls = []
+    function addCall(callObj) {
+        calls.push(callObj)
+    }
+    
     // We use these constants to avoid confusing boolean constants
     var Primitive = true; // returned to indicate expression was a primitive
     var NotPrimitive = false;
@@ -358,6 +450,7 @@ function inferTypes(asts) {
     // - `visitExp(node, void_ctx)`.
     // - `visitFunction(fun, expr)`.
     function visitFunction(fun, expr) {
+        getType(fun).functions.push(fun)
         fun.$env_type = env = new Map; // create new environment
         envStack.push(env);
         for (var i=0; i<fun.params.length; i++) {
@@ -417,6 +510,7 @@ function inferTypes(asts) {
                     } else {
                         continue;
                     }
+                    prty.key.$token_node = typ.getToken(name);
                     switch (prty.kind) {
                         case "init":
                             visitExp(prty.value, NotVoid);
@@ -511,9 +605,16 @@ function inferTypes(asts) {
                     } else {
                         unify(global, thisType(node.callee));
                     }
+                } else {
+                    addCall({
+                        callee: getType(node.callee),
+                        arguments: args.map(getType),
+                        'return': getType(node)
+                    })
                 }
                 if (node.type === "NewExpression") {
                     markAsConstructor(node.callee);
+                    addSuper(node, getType(node.callee).getPrty("prototype"))
                 }
                 return NotPrimitive;
             case "MemberExpression":
@@ -521,11 +622,11 @@ function inferTypes(asts) {
                 if (node.computed) {
                     visitExp(node.property, Void);
                     if (node.property.type === "Literal" && typeof node.property.value === "string") {
+                        node.property.$token_node = getType(node.object).getToken(node.property.value);
                         unify(node, getType(node.object).getPrty(node.property.value));
-                    } else {
-//                        unify(getType(node.property).getPrty("@prty-of"), node.object);
                     }
                 } else {
+                    node.property.$token_node = getType(node.object).getToken(node.property.name);
                     unify(node, getType(node.object).getPrty(node.property.name));
                     if (node.property.name === "prototype") {
                         markAsConstructor(node.object);
@@ -560,9 +661,24 @@ function inferTypes(asts) {
                 visitExp(node.expression, Void);
                 break;
             case "IfStatement":
+                function makeSubEnv() {
+                    var newEnv = new Map;
+                    env.forEach(function(name,value) {
+                        var typ = new TypeNode()
+                        addSuper(typ, value)
+                        newEnv.put(name, typ)
+                    })
+                    // TODO: also add @return, but avoid @this
+                    // TODO: restrict to function environment
+                    return newEnv
+                }
                 visitExp(node.test, Void);
+                pushEnv(makeSubEnv())
                 visitStmt(node.consequent);
+                popEnv()
+                pushEnv(makeSubEnv())
                 visitStmt(node.alternate);
+                popEnv()
                 break;
             case "LabeledStatement":
                 visitStmt(node.body);
@@ -683,6 +799,85 @@ function inferTypes(asts) {
         }
     }
     unifier.complete();
+    
+    // Inherit functions from supers
+    function inheritFunctions() {
+        var visited = {}
+        var visited_edge = {}
+        function inherit(node, sup) {
+            node = node.rep()
+            sup = sup.rep()
+            superDFS(sup)
+            var h = node.id + ';' + sup.id
+            if (visited_edge[h]) return
+            visited_edge[h] = true
+            sup.functions.forEach(function(fun) {
+                node.functions.push(fun)
+            })
+            sup.prty.forEach(function(name, value) {
+                if (node.prty.has(name)) {
+                    inherit(node.getPrty(name), value)
+                }
+            })
+        }
+        function superDFS(node) {
+            node = node.rep()
+            if (visited[node.id]) return
+            visited[node.id] = true
+            for (var i=0, len=node.supers.length; i<len; ++i) {
+                var sup = node.supers[i].rep()
+                inherit(node, sup)
+            }
+        }
+        nodesWithSuper.forEach(superDFS)
+    }
+    inheritFunctions()
+    
+    // Add supers from calls
+    calls.forEach(function(call) {
+        var callee = call.callee.rep()
+        // Only super edges if a single target was found. It is not safe to add edges if the target is unknown.
+        if (callee.functions.length !== 1) return
+        var target = callee.functions[0]
+        var numArgs = Math.min(call.arguments.length, target.params.length)
+        for (var i=0; i<numArgs; i++) {
+            addSuper(call.arguments[i], target.params[i])
+        }
+        addSuper(call['return'], returnType(target))
+    })
+    
+    // Handle supers (this step only unifies tokens)
+    function inheritTokens() {
+        var visited = {}
+        var visited_edge = {}
+        function inherit(node, sup) {
+            node = node.rep()
+            sup = sup.rep()
+            superDFS(sup)
+            var h = node.id + ';' + sup.id
+            if (visited_edge[h]) return
+            visited_edge[h] = true
+            sup.tokens.forEach(function(name, value) {
+                unifier.unifyTokens(node.getToken(name), value)
+            })
+            sup.prty.forEach(function(name, value) {
+                if (node.prty.has(name)) {
+                    inherit(node.getPrty(name), value)
+                }
+            })
+        }
+        function superDFS(node) {
+            node = node.rep()
+            if (visited[node.id]) return
+            visited[node.id] = true
+            for (var i=0, len=node.supers.length; i<len; ++i) {
+                var sup = node.supers[i].rep()
+                inherit(node, sup)
+            }
+        }
+        nodesWithSuper.forEach(superDFS)
+    }
+    inheritTokens()
 
     asts.global = global; // expose global object type
 } /* end of inferTypes */
@@ -699,17 +894,17 @@ function classifyId(node) {
     switch (parent.type) {
         case 'MemberExpression':
             if (!parent.computed && parent.property === node && node.type === 'Identifier') {
-                return {type:"property", base:parent.object, name:node.name};
+                return {type:"property", base:parent.object, name:node.name, tokenNode: node.$token_node};
             } else if (parent.computed && parent.property === node && node.type === 'Literal') {
-                return {type:"property", base:parent.object, name:node.value};
+                return {type:"property", base:parent.object, name:node.value, tokenNode: node.$token_node};
             }
             break;
         case 'Property':
             if (parent.key === node) {
                 if (node.type === 'Identifier') {
-                    return {type:"property", base:parent.$parent, name:node.name};
+                    return {type:"property", base:parent.$parent, name:node.name, tokenNode: node.$token_node};
                 } else if (node.type === 'Literal') {
-                    return {type:"property", base:parent.$parent, name:node.value};
+                    return {type:"property", base:parent.$parent, name:node.value, tokenNode: node.$token_node};
                 }
             }
             break;
@@ -773,19 +968,14 @@ function computeRenaming(ast, file, offset) {
 function computePropertyRenaming(ast, name) {
     var group2members = {};
     var global = ast.global.rep().id;
-    function add(base, id) {
-        var key = base.$type_node.rep().id;
-        if (key === global)
-            return; // global variables are kept separate
-        if (!group2members[key]) {
-            group2members[key] = [];
-        }
-        group2members[key].push(id);
-    }
     function visit(node) {
         var clazz = classifyId(node);
         if (clazz !== null && clazz.type === 'property' && clazz.name === name) {
-            add(clazz.base, node);
+            var key = clazz.tokenNode.rep().id
+            if (!group2members[key]) {
+                group2members[key] = [];
+            }
+            group2members[key].push(node)
         }
         children(node).forEach(visit);
     }
@@ -974,7 +1164,6 @@ JavaScriptBuffer.prototype.add = function(file, source_code, options) {
     }
     switch (type) {
         case "html":
-            console.log("html")
             var fragments = htmljs(source_code)
             var lineOffsets = new LineOffsets(source_code)
             for (var i=0; i<fragments.length; i++) {
