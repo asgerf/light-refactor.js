@@ -56,6 +56,7 @@ function injectParentPointers(node, parent) {
 function getEnclosingFunction(node) {
     while  (node.type !== 'FunctionDeclaration' && 
             node.type !== 'FunctionExpression' && 
+            node.type !== 'ArrowFunctionExpression' &&
             node.type !== 'Program') {
         node = node.$parent;
     }
@@ -71,6 +72,7 @@ function buildEnvs(node, scope) {
     switch (node.type) {
         case 'FunctionDeclaration':
         case 'FunctionExpression':
+        case 'ArrowFunctionExpression':
             if (node.type == 'FunctionDeclaration') {
                 scope.$env.put(node.id.name, node.id);
             }
@@ -79,7 +81,9 @@ function buildEnvs(node, scope) {
             for (var i=0; i<node.params.length; i++) {
                 scope.$env.put(node.params[i].name, node.params[i]);
             }
-            node.$env.put("arguments", node);
+            if (node.type !== 'ArrowFunctionExpression') {
+                node.$env.put("arguments", node);
+            }
             break;
         case 'VariableDeclarator':
             scope.$env.put(node.id.name, node.id);
@@ -108,6 +112,7 @@ function getVarDeclScope(node) {
                     return node;
                 break;
             case 'FunctionExpression':
+            case 'ArrowFunctionExpression':
             case 'CatchClause':
                 if (node.$env.has(name))
                     return node;
@@ -376,7 +381,13 @@ function inferTypes(asts) {
         addVarToEnv("@return");
         addVarToEnv("arguments");
         unify(thisType(fun), getType(fun).getPrty("prototype"))
-        visitStmt(fun.body); // visit function body
+        // Visit function body
+        if (fun.type === 'ArrowFunctionExpression' && fun.body.type !== 'BlockStatement') {
+            visitExp(fun.body, NotVoid);
+            unify(returnType(fun), fun.body);
+        } else {
+            visitStmt(fun.body); 
+        }
         envStack.pop(); // restore original environment
         env = envStack[envStack.length-1];
     }
@@ -391,6 +402,10 @@ function inferTypes(asts) {
         switch (node.type) {
             case "FunctionExpression":
                 visitFunction(node, Expr);
+                return NotPrimitive;
+            case "ArrowFunctionExpression":
+                visitFunction(node, Expr);
+                unify(thisType(node), getVar("@this"));
                 return NotPrimitive;
             case "ThisExpression":
                 unify(node, getVar("@this"));
@@ -500,16 +515,18 @@ function inferTypes(asts) {
                 for (var i=0; i<args.length; i++) {
                     visitExp(args[i], NotVoid);
                 }
-                if (node.callee.type === "FunctionExpression") {
+                if (node.callee.type === "FunctionExpression" || node.callee.type === "ArrowFunctionExpression") {
                     var numArgs = Math.min(args.length, node.callee.params.length);
                     for (var i=0; i<numArgs; i++) {
                         unify(args[i], argumentType(node.callee, i));
                     }
                     unify(node, returnType(node.callee));
-                    if (node.type === "NewExpression") {
-                        unify(node, thisType(node.callee));
-                    } else {
-                        unify(global, thisType(node.callee));
+                    if (node.callee.type === "FunctionExpression") {
+                        if (node.type === "NewExpression") {
+                            unify(node, thisType(node.callee));
+                        } else {
+                            unify(global, thisType(node.callee));
+                        }
                     }
                 }
                 if (node.type === "NewExpression") {
@@ -828,7 +845,7 @@ function getLabelDecl(node) {
     var name = node.name;
     while (node && (node.type !== 'LabeledStatement' || node.label.name !== name)) {
         node = node.$parent;
-        if (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression')
+        if (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression')
             return null;
     }
     return node || null;
@@ -845,7 +862,8 @@ function computeLabelRenaming(node) {
                 break;
             case 'FunctionDeclaration':
             case 'FunctionExpression':
-                return; // labels don't propagte inside functions
+            case 'ArrowFunctionExpression':
+                return; // labels don't propagate inside functions
             case 'BreakStatement':
             case 'ContinueStatement':
                 if (node.label !== null && node.label.name === name)
@@ -887,6 +905,7 @@ function computeGlobalVariableRenaming(ast, name) {
                 break;
             case 'FunctionDeclaration':
             case 'FunctionExpression':
+            case 'ArrowFunctionExpression':
             case 'CatchClause':
                 if (node.$env.has(name)) {
                     if (!shadowed && node.type === 'FunctionDeclaration' && node.id.name === name) {
@@ -920,6 +939,7 @@ function computeLocalVariableRenaming(scope, name) {
                 break;
             case 'FunctionDeclaration':
             case 'FunctionExpression':
+            case 'ArrowFunctionExpression':
             case 'CatchClause':
                 if (node !== scope && node.$env.has(name)) { // shadowed?
                     if (node.type === 'FunctionDeclaration' && node.id.name === name) {
