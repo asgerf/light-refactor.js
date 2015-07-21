@@ -468,8 +468,6 @@ function inferTypes(asts) {
                 visitExp(node.right, Void);
                 return Primitive;
             case "AssignmentExpression":
-                if (typeof node.operator !== "string")
-                    throw "node.operator" // TODO: debugging
                 visitExp(node.left, NotVoid);
                 var p = visitExp(node.right, NotVoid);
                 if (node.operator === "=") {
@@ -994,7 +992,6 @@ JavaScriptBuffer.prototype.add = function(file, source_code, options) {
     }
     switch (type) {
         case "html":
-            console.log("html")
             var fragments = htmljs(source_code)
             var lineOffsets = new LineOffsets(source_code)
             for (var i=0; i<fragments.length; i++) {
