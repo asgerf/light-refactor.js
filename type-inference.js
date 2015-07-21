@@ -667,6 +667,21 @@ function inferTypes(asts) {
                     decl.id.$type_node = getVar(decl.id.name);
                 }
                 break;
+            case "ImportDeclaration":
+            case "ExportAllDeclaration":
+                break; // Nothing to do for single-file analysis.
+            case "ExportNamedDeclaration":
+                if (node.declaration !== null) {
+                    visitStmt(node.declaration);
+                }
+                break;
+            case "ExportDefaultDeclaration":
+                if (node.declaration.type === 'VariableDeclaration' || node.declaration.type === 'FunctionDeclaration') {
+                    visitStmt(node.declaration);
+                } else {
+                    visitExp(node.declaration, NotVoid);
+                }
+                break;
             default:
                 throw "Unknown statement: " + node.type;
         }
@@ -737,6 +752,16 @@ function classifyId(node) {
         case 'LabeledStatement':
             if (parent.label === node) {
                 return {type:"label", name:node.name};
+            }
+            break;
+        case 'ImportSpecifier':
+        case 'ImportDefaultSpecifier':
+        case 'ImportNamespaceSpecifier':
+        case 'ExportSpecifier':
+            if (parent.local === node) {
+                return {type:"variable", name:node.name};
+            } else {
+                return null; // Module member renaming not supported.
             }
             break;
     }
