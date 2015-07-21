@@ -18,6 +18,10 @@
 // children of an AST node.
 // We use the convention that any property starting with `$` should not be considered a child node.
 function children(node) {
+    if (node.type === 'ExportSpecifier' && node.local === node.exported) {
+        // Sometimes the AST is not actually a tree :(
+        return [node.local]
+    }
     var result = [];
     for (var k in node) {
         if (!node.hasOwnProperty(k))
